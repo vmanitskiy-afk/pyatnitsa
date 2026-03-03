@@ -1,0 +1,20 @@
+version: "3.8"
+
+services:
+  pyatnitsa:
+    build: .
+    container_name: pyatnitsa
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data          # Память (SQLite)
+      - ./skills:/app/skills      # Навыки
+      - ./logs:/app/logs          # Логи
+    ports:
+      - "8080:8080"               # API / webhooks
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3

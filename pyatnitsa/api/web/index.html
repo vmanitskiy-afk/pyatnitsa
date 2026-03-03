@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Пятница.ai</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0c0c0f;
+  --surface: #16161c;
+  --surface2: #1e1e28;
+  --border: #2a2a3a;
+  --text: #e4e4ec;
+  --text2: #8888a0;
+  --accent: #6c5ce7;
+  --accent2: #a29bfe;
+  --green: #00e676;
+  --red: #ff5252;
+  --orange: #ffab40;
+  --radius: 12px;
+  --font: 'Manrope', system-ui, sans-serif;
+  --mono: 'JetBrains Mono', monospace;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ─── Layout ─────────────────────────────────────────── */
+
+.app {
+  display: flex;
+  height: 100vh;
+}
+
+.sidebar {
+  width: 260px;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+
+.main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* ─── Sidebar ────────────────────────────────────────── */
+
+.logo {
+  padding: 24px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.logo h1 {
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+}
+
+.logo h1 span { color: var(--accent2); }
+
+.logo p {
+  font-size: 11px;
+  color: var(--text2);
+  margin-top: 4px;
+  font-family: var(--mono);
+}
+
+.nav {
+  padding: 12px 8px;
+  flex: 1;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text2);
+  transition: all 0.15s;
+  user-select: none;
+}
+
+.nav-item:hover { background: var(--surface2); color: var(--text); }
+.nav-item.active { background: var(--accent); color: #fff; }
+.nav-item svg { width: 18px; height: 18px; flex-shrink: 0; }
+
+.status-bar {
+  padding: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.status-dot {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+}
+
+.status-dot.ok { background: var(--green); box-shadow: 0 0 8px var(--green); }
+.status-dot.err { background: var(--red); }
+.status-dot.warn { background: var(--orange); }
+
+.status-text {
+  font-size: 12px;
+  color: var(--text2);
+}
+
+/* ─── Chat Panel ─────────────────────────────────────── */
+
+.chat-panel { display: flex; flex-direction: column; height: 100%; }
+.settings-panel { display: none; height: 100%; overflow-y: auto; }
+.panel-active { display: flex !important; }
+
+.chat-header {
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  font-size: 15px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.messages::-webkit-scrollbar { width: 6px; }
+.messages::-webkit-scrollbar-track { background: transparent; }
+.messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+.msg {
+  max-width: 75%;
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  font-size: 14px;
+  line-height: 1.55;
+  animation: msgIn 0.2s ease-out;
+}
+
+@keyframes msgIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.msg.user {
+  align-self: flex-end;
+  background: var(--accent);
+  color: #fff;
+  border-bottom-right-radius: 4px;
+}
+
+.msg.assistant {
+  align-self: flex-start;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-bottom-left-radius: 4px;
+}
+
+.msg.error {
+  align-self: flex-start;
+  background: #2a1520;
+  border: 1px solid #4a2030;
+  color: var(--red);
+}
+
+.msg.system {
+  align-self: center;
+  background: transparent;
+  color: var(--text2);
+  font-size: 12px;
+  font-family: var(--mono);
+}
+
+.msg pre {
+  background: var(--bg);
+  padding: 10px 12px;
+  border-radius: 8px;
+  margin: 8px 0;
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: 13px;
+}
+
+.typing {
+  align-self: flex-start;
+  padding: 12px 16px;
+  color: var(--text2);
+  font-size: 13px;
+}
+
+.typing span {
+  animation: blink 1.2s infinite;
+}
+@keyframes blink { 50% { opacity: 0.3; } }
+
+.chat-input-area {
+  padding: 16px 24px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.chat-input-wrap {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.chat-input {
+  flex: 1;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 14px;
+  resize: none;
+  outline: none;
+  min-height: 44px;
+  max-height: 160px;
+  transition: border-color 0.15s;
+}
+
+.chat-input:focus { border-color: var(--accent); }
+
+.chat-input::placeholder { color: var(--text2); }
+
+.send-btn {
+  width: 44px; height: 44px;
+  background: var(--accent);
+  border: none;
+  border-radius: var(--radius);
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+
+.send-btn:hover { background: var(--accent2); }
+.send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.send-btn svg { width: 20px; height: 20px; }
+
+/* ─── Settings Panel ─────────────────────────────────── */
+
+.settings-panel {
+  flex-direction: column;
+  padding: 24px;
+  gap: 24px;
+  overflow-y: auto;
+}
+
+.settings-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.settings-section-header {
+  padding: 14px 18px;
+  font-weight: 700;
+  font-size: 14px;
+  background: var(--surface2);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-section-body { padding: 16px 18px; }
+
+.field {
+  margin-bottom: 14px;
+}
+
+.field:last-child { margin-bottom: 0; }
+
+.field label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text2);
+  margin-bottom: 5px;
+  font-family: var(--mono);
+}
+
+.field input, .field select {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 9px 12px;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.field input:focus, .field select:focus { border-color: var(--accent); }
+.field input::placeholder { color: #555; }
+
+.field .hint {
+  font-size: 11px;
+  color: var(--text2);
+  margin-top: 4px;
+}
+
+.save-bar {
+  position: sticky;
+  bottom: 0;
+  padding: 16px 0;
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.btn {
+  padding: 10px 24px;
+  border-radius: 8px;
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  transition: all 0.15s;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.btn-primary:hover { background: var(--accent2); }
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text2);
+}
+
+.btn-ghost:hover { background: var(--surface2); color: var(--text); }
+
+.toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  background: var(--green);
+  color: #000;
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  transform: translateY(80px);
+  opacity: 0;
+  transition: all 0.3s;
+  z-index: 100;
+}
+
+.toast.show { transform: translateY(0); opacity: 1; }
+
+/* ─── Responsive ─────────────────────────────────────── */
+
+@media (max-width: 768px) {
+  .sidebar { width: 60px; }
+  .logo h1, .logo p, .nav-item span, .status-text { display: none; }
+  .nav-item { justify-content: center; padding: 12px; }
+  .msg { max-width: 90%; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="logo">
+      <h1>Пятница<span>.ai</span></h1>
+      <p>v0.1.0</p>
+    </div>
+    <nav class="nav">
+      <div class="nav-item active" data-panel="chat" onclick="switchPanel('chat')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+        <span>Чат</span>
+      </div>
+      <div class="nav-item" data-panel="settings" onclick="switchPanel('settings')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 00-2 2v.18a2 2 0 01-1 1.73l-.43.25a2 2 0 01-2 0l-.15-.08a2 2 0 00-2.73.73l-.22.38a2 2 0 00.73 2.73l.15.1a2 2 0 011 1.72v.51a2 2 0 01-1 1.74l-.15.09a2 2 0 00-.73 2.73l.22.38a2 2 0 002.73.73l.15-.08a2 2 0 012 0l.43.25a2 2 0 011 1.73V20a2 2 0 002 2h.44a2 2 0 002-2v-.18a2 2 0 011-1.73l.43-.25a2 2 0 012 0l.15.08a2 2 0 002.73-.73l.22-.39a2 2 0 00-.73-2.73l-.15-.08a2 2 0 01-1-1.74v-.5a2 2 0 011-1.74l.15-.09a2 2 0 00.73-2.73l-.22-.38a2 2 0 00-2.73-.73l-.15.08a2 2 0 01-2 0l-.43-.25a2 2 0 01-1-1.73V4a2 2 0 00-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+        <span>Настройки</span>
+      </div>
+    </nav>
+    <div class="status-bar">
+      <span class="status-dot" id="statusDot"></span>
+      <span class="status-text" id="statusText">Подключение...</span>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main class="main">
+    <!-- Chat -->
+    <div class="chat-panel panel-active" id="chatPanel">
+      <div class="chat-header">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent2)" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
+        Пятница
+      </div>
+      <div class="messages" id="messages">
+        <div class="msg system">Подключение к серверу...</div>
+      </div>
+      <div class="chat-input-area">
+        <div class="chat-input-wrap">
+          <textarea class="chat-input" id="chatInput" placeholder="Сообщение Пятнице..." rows="1" onkeydown="handleKey(event)"></textarea>
+          <button class="send-btn" id="sendBtn" onclick="sendMessage()" disabled>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Settings -->
+    <div class="settings-panel" id="settingsPanel">
+      <div class="settings-section">
+        <div class="settings-section-header">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent2)" stroke-width="2"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 002 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0022 16z"/></svg>
+          LLM — Языковая модель
+        </div>
+        <div class="settings-section-body">
+          <div class="field">
+            <label>llm.gigachat_credentials</label>
+            <input type="password" data-key="llm.gigachat_credentials" placeholder="base64(client_id:client_secret)">
+            <div class="hint">Получить: developers.sber.ru/studio → Проект → Client ID + Secret → base64</div>
+          </div>
+          <div class="field">
+            <label>llm.gigachat_model</label>
+            <select data-key="llm.gigachat_model">
+              <option value="GigaChat-2-Max">GigaChat-2-Max (топ)</option>
+              <option value="GigaChat-2-Pro">GigaChat-2-Pro (средний)</option>
+              <option value="GigaChat-2">GigaChat-2 (бесплатный)</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>llm.gigachat_scope</label>
+            <select data-key="llm.gigachat_scope">
+              <option value="GIGACHAT_API_PERS">GIGACHAT_API_PERS (физлицо)</option>
+              <option value="GIGACHAT_API_B2B">GIGACHAT_API_B2B (бизнес)</option>
+              <option value="GIGACHAT_API_CORP">GIGACHAT_API_CORP (корпоративный)</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>llm.claude_api_key</label>
+            <input type="password" data-key="llm.claude_api_key" placeholder="sk-ant-... (опционально, fallback)">
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-section-header">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent2)" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+          Каналы связи
+        </div>
+        <div class="settings-section-body">
+          <div class="field">
+            <label>channels.max_bot_token</label>
+            <input type="password" data-key="channels.max_bot_token" placeholder="Токен от @MasterBot">
+            <div class="hint">В MAX мессенджере: @MasterBot → Создать бота → Скопировать токен</div>
+          </div>
+          <div class="field">
+            <label>channels.telegram_bot_token</label>
+            <input type="password" data-key="channels.telegram_bot_token" placeholder="Опционально">
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-section-header">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent2)" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
+          Интеграции
+        </div>
+        <div class="settings-section-body">
+          <div class="field">
+            <label>integrations.redmine_url</label>
+            <input type="text" data-key="integrations.redmine_url" placeholder="https://redmine.example.com">
+          </div>
+          <div class="field">
+            <label>integrations.redmine_api_key</label>
+            <input type="password" data-key="integrations.redmine_api_key" placeholder="API ключ Redmine">
+          </div>
+          <div class="field">
+            <label>integrations.bitrix_webhook_url</label>
+            <input type="text" data-key="integrations.bitrix_webhook_url" placeholder="https://company.bitrix24.ru/rest/1/xxx/">
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-section-header">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent2)" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+          Система
+        </div>
+        <div class="settings-section-body">
+          <div class="field">
+            <label>system.agent_name</label>
+            <input type="text" data-key="system.agent_name" placeholder="Пятница">
+          </div>
+          <div class="field">
+            <label>system.log_level</label>
+            <select data-key="system.log_level">
+              <option value="DEBUG">DEBUG</option>
+              <option value="INFO">INFO</option>
+              <option value="WARNING">WARNING</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>system.heartbeat_interval</label>
+            <input type="number" data-key="system.heartbeat_interval" placeholder="5">
+            <div class="hint">Интервал проактивных проверок (минуты)</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="save-bar">
+        <button class="btn btn-ghost" onclick="loadSettings()">Отменить</button>
+        <button class="btn btn-primary" onclick="saveSettings()">Сохранить</button>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ─── State ──────────────────────────────────────────────────
+let ws = null;
+let connected = false;
+
+// ─── Panel switching ────────────────────────────────────────
+function switchPanel(name) {
+  document.querySelectorAll('.nav-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.panel === name);
+  });
+  document.getElementById('chatPanel').classList.toggle('panel-active', name === 'chat');
+  document.getElementById('settingsPanel').classList.toggle('panel-active', name === 'settings');
+  if (name === 'settings') loadSettings();
+}
+
+// ─── Toast ──────────────────────────────────────────────────
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 2000);
+}
+
+// ─── Status ─────────────────────────────────────────────────
+function setStatus(state, text) {
+  const dot = document.getElementById('statusDot');
+  const txt = document.getElementById('statusText');
+  dot.className = 'status-dot ' + state;
+  txt.textContent = text;
+}
+
+// ─── WebSocket Chat ─────────────────────────────────────────
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${proto}//${location.host}/ws/chat`);
+
+  ws.onopen = () => {
+    connected = true;
+    document.getElementById('sendBtn').disabled = false;
+    setStatus('ok', 'Подключено');
+    addMsg('system', 'Подключено к Пятнице');
+    fetchStatus();
+  };
+
+  ws.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    removeTyping();
+    if (data.type === 'message') {
+      addMsg('assistant', data.text);
+    } else if (data.type === 'error') {
+      addMsg('error', data.text);
+    } else if (data.type === 'typing') {
+      showTyping();
+    }
+  };
+
+  ws.onclose = () => {
+    connected = false;
+    document.getElementById('sendBtn').disabled = true;
+    setStatus('err', 'Отключено');
+    setTimeout(connectWS, 3000);
+  };
+
+  ws.onerror = () => {
+    setStatus('err', 'Ошибка связи');
+  };
+}
+
+function sendMessage() {
+  const input = document.getElementById('chatInput');
+  const text = input.value.trim();
+  if (!text || !connected) return;
+
+  addMsg('user', text);
+  ws.send(JSON.stringify({ text }));
+  input.value = '';
+  input.style.height = 'auto';
+}
+
+function handleKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+}
+
+// ─── Messages ───────────────────────────────────────────────
+function addMsg(role, text) {
+  const container = document.getElementById('messages');
+  // Remove initial system message
+  const initial = container.querySelector('.msg.system');
+  if (initial && initial.textContent === 'Подключение к серверу...') initial.remove();
+
+  const div = document.createElement('div');
+  div.className = `msg ${role}`;
+  div.innerHTML = formatText(text);
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+}
+
+function showTyping() {
+  removeTyping();
+  const container = document.getElementById('messages');
+  const div = document.createElement('div');
+  div.className = 'typing';
+  div.id = 'typingIndicator';
+  div.innerHTML = '<span>Пятница думает...</span>';
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+}
+
+function removeTyping() {
+  const el = document.getElementById('typingIndicator');
+  if (el) el.remove();
+}
+
+function formatText(text) {
+  // Basic markdown: code blocks, bold, links
+  text = text.replace(/```(\w*)\n?([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
+  text = text.replace(/`([^`]+)`/g, '<code style="background:var(--bg);padding:2px 6px;border-radius:4px;font-family:var(--mono);font-size:13px">$1</code>');
+  text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  text = text.replace(/\n/g, '<br>');
+  return text;
+}
+
+// ─── Auto-resize textarea ───────────────────────────────────
+document.getElementById('chatInput').addEventListener('input', function() {
+  this.style.height = 'auto';
+  this.style.height = Math.min(this.scrollHeight, 160) + 'px';
+});
+
+// ─── Settings ───────────────────────────────────────────────
+async function loadSettings() {
+  try {
+    const res = await fetch('/api/settings');
+    const data = await res.json();
+    document.querySelectorAll('[data-key]').forEach(el => {
+      const key = el.dataset.key;
+      if (data[key] !== undefined) {
+        el.value = data[key];
+      }
+    });
+  } catch (e) {
+    toast('Ошибка загрузки настроек');
+  }
+}
+
+async function saveSettings() {
+  const settings = {};
+  document.querySelectorAll('[data-key]').forEach(el => {
+    settings[el.dataset.key] = el.value;
+  });
+
+  try {
+    const res = await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ settings }),
+    });
+    const data = await res.json();
+    toast('Настройки сохранены');
+  } catch (e) {
+    toast('Ошибка сохранения');
+  }
+}
+
+// ─── System status ──────────────────────────────────────────
+async function fetchStatus() {
+  try {
+    const res = await fetch('/api/status');
+    const data = await res.json();
+    const providers = data.llm_providers || [];
+    const skills = data.skills || [];
+    if (providers.length) {
+      setStatus('ok', `LLM: ${providers.join(', ')} | Skills: ${skills.length}`);
+    } else {
+      setStatus('warn', 'LLM не подключена');
+    }
+  } catch (e) {}
+}
+
+// ─── Init ───────────────────────────────────────────────────
+connectWS();
+</script>
+</body>
+</html>
