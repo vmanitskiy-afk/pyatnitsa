@@ -980,6 +980,12 @@ function removeTyping() {
 
 function formatText(text) {
   if (!text) return '';
+  // Убираем содержимое файлов из отображения
+  text = text.replace(/\[File:[^\]]*\][\s\S]*?\[\/File\]/g, '');
+  text = text.replace(/\[File:[^\]]*\]/g, '');
+  text = text.replace(/\[Image:[^\]]*\]/g, '');
+  text = text.replace(/\[file:[^\]]*\]/g, '');
+  text = text.trim();
   text = text.replace(/```(\w*)\n?([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
   text = text.replace(/`([^`]+)`/g, '<code style="background:var(--bg);padding:2px 6px;border-radius:4px;font-family:var(--mono);font-size:13px">$1</code>');
   text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');

@@ -84,20 +84,27 @@ class Agent:
 
         # Обработка вложений — извлечение текста + картинок для LLM
         file_context, images = await self._process_attachments(message.attachments)
-        if file_context:
-            text = f"{text}\n\n{file_context}" if text else file_context
+        # Краткие метки файлов для сохранения в БД
+        file_labels = ""
+        if message.attachments:
+            names = [a.filename or "file" for a in message.attachments]
+            file_labels = " ".join(f"[\U0001F4CE {n}]" for n in names)
 
         if not self.conversations:
             if message.listen_only:
                 return Response(text=None)
+            # legacy: передаём полный контент в LLM
+            if file_context:
+                message.text = f"{text}\n\n{file_context}" if text else file_context
             return await self._handle_legacy(message)
 
         conv = self.conversations
         chat = await conv.get_or_create_active_chat(user_id, message.channel)
 
-        # В групповом режиме добавляем имя автора
+        # В БД — чистый текст + короткие метки файлов (без содержимого!)
         sender_name = message.raw.get("sender_name", "")
-        save_text = f"[{sender_name}]: {text}" if sender_name and message.listen_only else text
+        display_text = f"{text}\n{file_labels}" if file_labels else text
+        save_text = f"[{sender_name}]: {display_text}" if sender_name and message.listen_only else display_text
         await conv.add_message(chat.id, "user", save_text)
 
         # listen_only: сохранили в историю, но не отвечаем
@@ -120,6 +127,12 @@ class Agent:
         )
 
         history = [LLMMessage(role=m["role"], content=m["content"]) for m in llm_messages]
+
+        # Инжектируем файловый контент в последнее сообщение (только для LLM!)
+        if file_context and history:
+            last = history[-1]
+            if last.role == "user" and isinstance(last.content, str):
+                last.content = f"{last.content}\n\n{file_context}"
 
         # Если есть картинки — делаем мультимодальное сообщение
         if images:

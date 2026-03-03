@@ -100,6 +100,11 @@ async def websocket_chat(ws: WebSocket):
                                         ct = ""
                                 except (json.JSONDecodeError, TypeError):
                                     pass
+                                import re as _hre
+                                ct = _hre.sub(r'\[File:.*?\[/File\]', '', ct, flags=_hre.DOTALL)
+                                ct = _hre.sub(r'\[File:[^\]]*\]', '', ct)
+                                ct = _hre.sub(r'\[Image:[^\]]*\]', '', ct)
+                                ct = ct.strip()
                                 if ct and ct.strip():
                                     history.append({"role": m.role, "text": ct})
                         await ws.send_text(json.dumps({"type": "history", "messages": history, "chat_title": chat.title}))
