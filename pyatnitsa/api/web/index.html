@@ -149,6 +149,24 @@ body {
   flex-shrink: 0;
 }
 
+
+.header-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.2s;
+}
+.header-btn:hover { background: var(--surface2); color: var(--text); }
+.header-btn-accent { border-color: var(--accent); color: var(--accent); }
+.header-btn-accent:hover { background: var(--accent); color: #fff; }
+
 .messages {
   flex: 1;
   overflow-y: auto;
@@ -480,8 +498,19 @@ body {
     <!-- Chat Panel -->
     <div class="panel active" id="chatPanel">
       <div class="chat-header">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent2)" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
-        Пятница
+        <div style="display:flex;align-items:center;gap:8px;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent2)" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
+          <span id="chatTitle">Пятница</span>
+        </div>
+        <div style="display:flex;gap:6px;margin-left:auto;">
+          <button onclick="showHistory()" class="header-btn" title="История чатов">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="10"/></svg>
+          </button>
+          <button onclick="newChat()" class="header-btn header-btn-accent" title="Новый чат">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            <span>Новый чат</span>
+          </button>
+        </div>
       </div>
       <div class="messages" id="messages">
         <div class="msg system">Подключение к серверу...</div>
@@ -683,6 +712,9 @@ function connectWS() {
       } else {
         addMsg('system', 'Подключено к Пятнице');
       }
+      if (data.chat_title && data.chat_title !== 'Новый чат') {
+        document.getElementById('chatTitle').textContent = data.chat_title;
+      }
     } else if (data.type === 'message') {
       addMsg('assistant', data.text);
     } else if (data.type === 'error') {
@@ -704,10 +736,18 @@ function connectWS() {
   };
 }
 
+
+function showHistory() {
+  if (ws && connected) {
+    ws.send(JSON.stringify({ text: '/history' }));
+  }
+}
+
 function newChat() {
   if (ws && connected) {
     ws.send(JSON.stringify({ text: '/new' }));
     document.getElementById('messages').innerHTML = '';
+    document.getElementById('chatTitle').textContent = 'Пятница';
     addMsg('system', 'Новый чат создан');
   }
 }
