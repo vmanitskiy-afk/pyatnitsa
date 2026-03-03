@@ -102,10 +102,19 @@ class MaxChannel(BaseChannel):
             if event.message and event.message.body:
                 text = event.message.body.text if hasattr(event.message.body, "text") else str(event.message.body)
             
+            # mid — безопасно достаём ID сообщения
+            mid = str(uuid.uuid4())
+            if event.message:
+                mid = str(getattr(event.message, 'mid', None) or getattr(event.message, 'message_id', None) or mid)
+            
+            uid = "unknown"
+            if event.message and event.message.sender:
+                uid = str(event.message.sender.user_id)
+            
             msg = Message(
-                id=str(event.message.message_id) if event.message else str(uuid.uuid4()),
+                id=mid,
                 channel=self.name,
-                user_id=str(event.message.sender.user_id) if event.message and event.message.sender else "unknown",
+                user_id=uid,
                 chat_id=str(event.chat_id),
                 text=text,
                 role=MessageRole.USER,
