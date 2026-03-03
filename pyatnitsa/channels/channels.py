@@ -51,7 +51,7 @@ class BaseChannel(ABC):
         if self._handler:
             try:
                 response = await self._handler(message)
-                if response:
+                if response and (response.text or response.attachments):
                     await self.send(message.chat_id, response)
             except Exception as e:
                 logger.error("channel_dispatch_error", channel=self.name, error=str(e))
@@ -204,7 +204,11 @@ class TelegramChannel(BaseChannel):
                                 is_mention = True
                                 break
                 if not (is_command or is_reply_to_bot or is_mention):
-                    return
+                    addressed = False
+                else:
+                    addressed = True
+            else:
+                addressed = True
 
             # Убираем @mention из текста
             raw_text = tg_message.text or tg_message.caption or ""
@@ -231,6 +235,8 @@ class TelegramChannel(BaseChannel):
                 chat_id=str(tg_message.chat.id),
                 text=clean_text,
                 attachments=attachments,
+                listen_only=not addressed,
+                raw={"sender_name": ((tg_message.from_user.first_name or "") + " " + (tg_message.from_user.last_name or "")).strip() if tg_message.from_user else ""},
                 role=MessageRole.USER,
             )
             await self._dispatch(msg)

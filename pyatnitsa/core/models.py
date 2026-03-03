@@ -37,6 +37,7 @@ class Message(BaseModel):
     role: MessageRole = MessageRole.USER
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     raw: dict[str, Any] = Field(default_factory=dict)  # оригинал от канала
+    listen_only: bool = False  # сохранить в историю, но не отвечать
 
 
 class Response(BaseModel):

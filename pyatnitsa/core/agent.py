@@ -88,11 +88,21 @@ class Agent:
             text = f"{text}\n\n{file_context}" if text else file_context
 
         if not self.conversations:
+            if message.listen_only:
+                return Response(text=None)
             return await self._handle_legacy(message)
 
         conv = self.conversations
         chat = await conv.get_or_create_active_chat(user_id, message.channel)
-        await conv.add_message(chat.id, "user", text)
+
+        # В групповом режиме добавляем имя автора
+        sender_name = message.raw.get("sender_name", "")
+        save_text = f"[{sender_name}]: {text}" if sender_name and message.listen_only else text
+        await conv.add_message(chat.id, "user", save_text)
+
+        # listen_only: сохранили в историю, но не отвечаем
+        if message.listen_only:
+            return Response(text=None)
 
         memory_context = await self.memory.build_context(user_id)
         tools = self.skills.get_all_tools()
