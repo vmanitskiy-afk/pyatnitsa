@@ -19,8 +19,8 @@ class BrowserSkill(BaseSkill):
     description = "Браузерная автоматизация: открытие страниц, скриншоты, клики, заполнение форм, извлечение данных"
     version = "1.0.0"
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
         self._state_file = ""
         self._screenshot_file = ""
         self._last_url_file = ""

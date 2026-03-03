@@ -137,8 +137,8 @@ class ShortenerSkill(BaseSkill):
     description = "Сокращение наименований организаций по корпоративному стандарту"
     version = "1.0.0"
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
         self._opf: dict[str, str] = {}
         self._opf_keys: list[str] = []
         self._regions: dict[str, str] = {}

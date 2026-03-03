@@ -23,8 +23,8 @@ class CalendarSkill(BaseSkill):
     description = "Управление календарём Mail.ru: события, встречи, приглашения"
     version = "1.0.0"
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
         self._user = ""
         self._password = ""
         self._caldav_url = ""
