@@ -600,7 +600,7 @@ body {
 
       <div class="save-bar">
         <button class="btn btn-ghost" onclick="cancelSettings()">Отменить</button>
-        <button class="btn btn-primary" onclick="saveSettings()">Сохранить</button>
+        <button class="btn btn-primary" onclick="saveSettings()">Сохранить и применить</button>
       </div>
     </div>
 
@@ -771,8 +771,18 @@ function saveSettings() {
     body: JSON.stringify({ settings: settings }),
   })
     .then(function(res) { return res.json(); })
+    .then(function() {
+      // Apply — hot-reload LLM
+      return fetch('/api/apply', { method: 'POST' });
+    })
+    .then(function(res) { return res.json(); })
     .then(function(data) {
-      toast('Настройки сохранены! Перезапустите сервер для применения.');
+      if (data.status === 'ok') {
+        toast('Настройки применены! LLM: ' + data.providers.join(', '));
+        fetchStatus();
+      } else {
+        toast(data.message || 'Ошибка применения', true);
+      }
     })
     .catch(function(e) {
       toast('Ошибка сохранения', true);

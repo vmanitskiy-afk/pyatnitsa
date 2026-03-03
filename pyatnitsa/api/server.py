@@ -145,6 +145,56 @@ async def rest_chat(body: ChatRequest):
 
 # ─── System Info ─────────────────────────────────────────────
 
+@app.post("/api/apply")
+async def apply_settings():
+    """Hot-reload: переинициализирует LLM и агента из текущих настроек."""
+    global _agent
+    if not _settings_store:
+        return JSONResponse({"error": "Settings store not initialized"}, 503)
+
+    from pyatnitsa.core.llm import LLMManager, GigaChatProvider
+    from pyatnitsa.core.agent import Agent
+    from pyatnitsa.skills.skills import SkillLoader
+
+    llm = LLMManager()
+    errors = []
+
+    # GigaChat
+    gc_creds = await _settings_store.get("llm.gigachat_credentials")
+    if gc_creds and "•" not in gc_creds:
+        try:
+            gc_model = await _settings_store.get("llm.gigachat_model")
+            gc_scope = await _settings_store.get("llm.gigachat_scope")
+            llm.add_provider(GigaChatProvider(
+                credentials=gc_creds,
+                model=gc_model or "GigaChat-2-Max",
+                scope=gc_scope or "GIGACHAT_API_PERS",
+                verify_ssl=False,
+            ))
+        except Exception as e:
+            errors.append(f"GigaChat: {e}")
+
+    if not llm.providers:
+        return JSONResponse({
+            "status": "error",
+            "message": "Не удалось подключить LLM. Проверьте credentials.",
+            "errors": errors,
+        }, 400)
+
+    # Skills
+    skills = SkillLoader(skills_dir="skills")
+    await skills.load_all()
+
+    # Agent
+    _agent = Agent(llm=llm, skills=skills, memory=_memory_store)
+
+    return {
+        "status": "ok",
+        "providers": [p.name for p in llm.providers],
+        "skills": list(skills.skills.keys()),
+    }
+
+
 @app.get("/api/status")
 async def system_status():
     info: dict[str, Any] = {
