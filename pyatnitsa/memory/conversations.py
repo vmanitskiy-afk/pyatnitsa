@@ -149,6 +149,7 @@ class ConversationStore:
             """SELECT c.*, COUNT(m.id) as message_count
                FROM chats c
                LEFT JOIN chat_messages m ON m.chat_id = c.id
+                   AND m.is_compacted = 0
                    AND m.content NOT LIKE '[%'
                WHERE c.user_id = ?
                GROUP BY c.id
@@ -181,6 +182,7 @@ class ConversationStore:
         cursor = await self._db.execute(
             "SELECT c.*, COUNT(m.id) as message_count FROM chats c"
             " LEFT JOIN chat_messages m ON m.chat_id = c.id"
+            " AND m.is_compacted = 0"
             " AND m.content NOT LIKE '[%'"
             " WHERE c.id = ? GROUP BY c.id",
             (chat_id,),
