@@ -622,6 +622,11 @@ body {
 // ─── State ──────────────────────────────────────────────────
 let ws = null;
 let connected = false;
+let userId = localStorage.getItem('pyatnitsa_user_id');
+if (!userId) {
+  userId = 'web_' + Math.random().toString(36).substring(2, 10);
+  localStorage.setItem('pyatnitsa_user_id', userId);
+}
 
 // ─── Panel switching ────────────────────────────────────────
 function switchPanel(name) {
@@ -662,14 +667,23 @@ function connectWS() {
     document.getElementById('sendBtn').disabled = false;
     setStatus('ok', 'Подключено');
     document.querySelectorAll('#messages .msg.system').forEach(function(el) { el.remove(); });
-    addMsg('system', 'Подключено к Пятнице');
+    // Отправляем init с user_id для загрузки истории
+    ws.send(JSON.stringify({ type: 'init', user_id: userId }));
     fetchStatus();
   };
 
   ws.onmessage = function(e) {
     var data = JSON.parse(e.data);
     removeTyping();
-    if (data.type === 'message') {
+    if (data.type === 'history') {
+      var container = document.getElementById('messages');
+      container.innerHTML = '';
+      if (data.messages && data.messages.length > 0) {
+        data.messages.forEach(function(m) { addMsg(m.role, m.text); });
+      } else {
+        addMsg('system', 'Подключено к Пятнице');
+      }
+    } else if (data.type === 'message') {
       addMsg('assistant', data.text);
     } else if (data.type === 'error') {
       addMsg('error', data.text);
@@ -688,6 +702,14 @@ function connectWS() {
   ws.onerror = function() {
     setStatus('err', 'Ошибка связи');
   };
+}
+
+function newChat() {
+  if (ws && connected) {
+    ws.send(JSON.stringify({ text: '/new' }));
+    document.getElementById('messages').innerHTML = '';
+    addMsg('system', 'Новый чат создан');
+  }
 }
 
 function sendMessage() {

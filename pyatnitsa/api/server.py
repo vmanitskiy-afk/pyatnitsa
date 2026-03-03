@@ -24,12 +24,16 @@ _settings_store = None
 _memory_store = None
 
 
-def inject_dependencies(agent, settings_store, memory_store):
+_conversation_store = None
+
+
+def inject_dependencies(agent, settings_store, memory_store, conversation_store=None):
     """Вызывается из main.py после инициализации."""
-    global _agent, _settings_store, _memory_store
+    global _agent, _settings_store, _memory_store, _conversation_store
     _agent = agent
     _settings_store = settings_store
     _memory_store = memory_store
+    _conversation_store = conversation_store
 
 
 # ─── Health ──────────────────────────────────────────────────
@@ -66,18 +70,46 @@ async def update_settings(body: SettingsUpdate):
 @app.websocket("/ws/chat")
 async def websocket_chat(ws: WebSocket):
     await ws.accept()
-    session_id = str(uuid.uuid4())[:8]
-    user_id = f"web_{session_id}"
-    logger.info("ws_chat_connected", session=session_id)
+    user_id = None
+    logger.info("ws_chat_connected")
 
     try:
         while True:
             data = await ws.receive_text()
             payload = json.loads(data)
-            text = payload.get("text", "").strip()
 
+            if payload.get("type") == "init":
+                user_id = payload.get("user_id", f"web_{uuid.uuid4().hex[:8]}")
+                logger.info("ws_chat_init", user_id=user_id)
+                if _conversation_store and _agent:
+                    try:
+                        chat = await _conversation_store.get_or_create_active_chat(user_id, "web")
+                        msgs = await _conversation_store.get_messages(chat.id)
+                        history = []
+                        for m in msgs:
+                            if m.role in ("user", "assistant"):
+                                ct = m.content
+                                try:
+                                    parsed = json.loads(ct)
+                                    if isinstance(parsed, list):
+                                        texts = [b.get("text", "") for b in parsed if isinstance(b, dict) and b.get("type") == "text"]
+                                        ct = " ".join(texts) if texts else ""
+                                    elif isinstance(parsed, dict):
+                                        ct = ""
+                                except (json.JSONDecodeError, TypeError):
+                                    pass
+                                if ct and ct.strip():
+                                    history.append({"role": m.role, "text": ct})
+                        await ws.send_text(json.dumps({"type": "history", "messages": history, "chat_title": chat.title}))
+                    except Exception as e:
+                        logger.error("ws_history_error", error=str(e))
+                continue
+
+            text = payload.get("text", "").strip()
             if not text:
                 continue
+            if not user_id:
+                user_id = f"web_{uuid.uuid4().hex[:8]}" 
 
             if not _agent:
                 await ws.send_text(json.dumps({
@@ -95,7 +127,7 @@ async def websocket_chat(ws: WebSocket):
                     id=str(uuid.uuid4()),
                     channel="web",
                     user_id=user_id,
-                    chat_id=session_id,
+                    chat_id="web",
                     text=text,
                     role=MessageRole.USER,
                 )
@@ -114,7 +146,7 @@ async def websocket_chat(ws: WebSocket):
                 }))
 
     except WebSocketDisconnect:
-        logger.info("ws_chat_disconnected", session=session_id)
+        logger.info("ws_chat_disconnected", user_id=user_id)
 
 
 # ─── Chat API (REST fallback) ───────────────────────────────
@@ -141,6 +173,24 @@ async def rest_chat(body: ChatRequest):
     )
     response = await _agent.handle_message(msg)
     return {"text": response.text}
+
+
+
+# Chats API
+@app.get("/api/chats")
+async def list_chats(user_id: str = "web_default", limit: int = 10):
+    if not _conversation_store:
+        return JSONResponse({"error": "Conversations not initialized"}, 503)
+    chats = await _conversation_store.list_chats(user_id, limit=limit)
+    return [c.to_dict() for c in chats]
+
+
+@app.post("/api/chats/new")
+async def new_chat_api(user_id: str = "web_default"):
+    if not _conversation_store:
+        return JSONResponse({"error": "Conversations not initialized"}, 503)
+    chat = await _conversation_store.create_chat(user_id, "web")
+    return chat.to_dict()
 
 
 # ─── System Info ─────────────────────────────────────────────

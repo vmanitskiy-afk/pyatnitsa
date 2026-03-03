@@ -139,6 +139,7 @@ async def run():
         agent=agent,
         settings_store=settings_store,
         memory_store=memory,
+        conversation_store=conversation_store,
     )
 
     # ─── Channels (опционально) ──────────────────────────────
