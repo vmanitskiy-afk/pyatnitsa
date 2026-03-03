@@ -22,6 +22,7 @@ from pyatnitsa.core.llm import LLMManager, GigaChatProvider, ClaudeProvider
 from pyatnitsa.channels.channels import MaxChannel, TelegramChannel
 from pyatnitsa.skills.skills import SkillLoader
 from pyatnitsa.memory.store import MemoryStore
+from pyatnitsa.memory.conversations import ConversationStore
 from pyatnitsa.scheduler.heartbeat import Heartbeat
 from pyatnitsa.api.server import app as fastapi_app, inject_dependencies
 
@@ -49,6 +50,10 @@ async def run():
     # ─── Settings Store (для веб-панели) ─────────────────────
     settings_store = SettingsStore(db_path=settings.memory.db_path)
     await settings_store.init(db=memory._db)
+
+    # Хранилище чатов (использует ту же БД)
+    conversation_store = ConversationStore(db=memory._db)
+    await conversation_store.init()
 
     # Читаем credentials из settings_store (веб-панель может их обновить)
     gc_creds = settings.llm.gigachat_credentials or await settings_store.get("llm.gigachat_credentials")
@@ -122,7 +127,7 @@ async def run():
     await skills.load_all()
 
     # ─── Agent ───────────────────────────────────────────────
-    agent = Agent(llm=llm, skills=skills, memory=memory) if llm.providers else None
+    agent = Agent(llm=llm, skills=skills, memory=memory, conversations=conversation_store) if llm.providers else None
 
     # ─── Heartbeat ───────────────────────────────────────────
     heartbeat = Heartbeat(interval_minutes=settings.scheduler.heartbeat_interval_minutes)

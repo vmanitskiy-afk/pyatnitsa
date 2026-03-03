@@ -35,3 +35,4 @@ docker-compose.override.yml
 *.cer
 *.pem
 *.key
+*.bak
