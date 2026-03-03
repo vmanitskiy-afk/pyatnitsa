@@ -413,6 +413,14 @@ body {
 
 .btn-ghost:hover { background: var(--surface2); color: var(--text); }
 
+.btn-danger {
+  background: transparent;
+  color: var(--red);
+  border-color: var(--red);
+}
+
+.btn-danger:hover { background: var(--red); color: #fff; }
+
 .toast {
   position: fixed;
   bottom: 24px;
@@ -600,6 +608,7 @@ body {
 
       <div class="save-bar">
         <button class="btn btn-ghost" onclick="cancelSettings()">Отменить</button>
+        <button class="btn btn-danger" onclick="restartServer()">Перезапустить сервер</button>
         <button class="btn btn-primary" onclick="saveSettings()">Сохранить и применить</button>
       </div>
     </div>
@@ -792,6 +801,13 @@ function saveSettings() {
 function cancelSettings() {
   loadSettings();
   toast('Настройки сброшены');
+}
+
+function restartServer() {
+  if (!confirm('Перезапустить сервер Пятница.ai?')) return;
+  toast('Перезапуск...');
+  setStatus('warn', 'Перезапуск...');
+  fetch('/api/restart', { method: 'POST' }).catch(function() {});
 }
 
 // ─── System status ──────────────────────────────────────────

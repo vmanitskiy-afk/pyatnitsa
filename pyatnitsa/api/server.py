@@ -145,6 +145,22 @@ async def rest_chat(body: ChatRequest):
 
 # ─── System Info ─────────────────────────────────────────────
 
+@app.post("/api/restart")
+async def restart_server():
+    """Перезапуск процесса сервера."""
+    import os
+    import sys
+
+    logger.info("restart_requested_via_web")
+
+    async def _restart():
+        await asyncio.sleep(0.5)
+        os.execv(sys.executable, [sys.executable, "-m", "pyatnitsa.main"])
+
+    asyncio.create_task(_restart())
+    return {"status": "restarting"}
+
+
 @app.post("/api/apply")
 async def apply_settings():
     """Hot-reload: переинициализирует LLM и агента из текущих настроек."""
