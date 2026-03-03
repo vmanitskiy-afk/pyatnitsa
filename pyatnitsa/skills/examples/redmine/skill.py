@@ -599,6 +599,23 @@ class RedmineSkill(BaseSkill):
                     "parent_id": {"type": "integer", "description": "ID родительского проекта"},
                 }, "required": ["template", "name"],
             }),
+            LLMTool("redmine.apply_custom_menu",
+                "Применить настраиваемое меню к проекту (Playwright). "
+                "Включает чекбокс, удаляет дубликаты, добавляет пункты.", {
+                "type": "object", "properties": {
+                    "project": {"type": "string", "description": "Идентификатор проекта"},
+                    "items": {"type": "array", "description": "Пункты меню [{name, url}]",
+                              "items": {"type": "object", "properties": {
+                                  "name": {"type": "string"}, "url": {"type": "string"}}}},
+                }, "required": ["project"],
+            }),
+            LLMTool("redmine.inspect_cfs",
+                "Инспекция кастомных полей проекта через Playwright (настройки + edit). "
+                "Полезно для отладки — показывает все select с custom_field в name.", {
+                "type": "object", "properties": {
+                    "project": {"type": "string", "description": "Идентификатор проекта"},
+                }, "required": ["project"],
+            }),
         ]
 
     # ═══════════════════════════════════════════════════════
@@ -619,6 +636,8 @@ class RedmineSkill(BaseSkill):
                 "create_deal_project": self._create_deal_project,
                 "members": self._members, "me": self._me, "time_entries": self._time_entries,
                 "create_from_template": self._exec_create_from_template,
+                "apply_custom_menu": self._apply_custom_menu,
+                "inspect_cfs": self._inspect_cfs,
             }.get(action)
             if not handler:
                 return json.dumps({"error": f"Неизвестное действие: {action}"}, ensure_ascii=False)
@@ -845,6 +864,186 @@ class RedmineSkill(BaseSkill):
             parent_id=p.get("parent_id"),
         )
         return json.dumps(result, ensure_ascii=False)
+
+    # ── Playwright: Apply custom menu ─────────────────────
+
+    async def _apply_custom_menu(self, p: dict) -> str:
+        """Применяет настраиваемое меню к проекту через Playwright."""
+        project = p["project"]
+        items = p.get("items") or [
+            {"name": "+ Командировка", "url": f"{self.base_url}/templates/trip202022131511-template-5/create"},
+        ]
+
+        if not self.rdm_login or not self.rdm_password:
+            return json.dumps({"success": False, "error": "RDM_LOGIN/RDM_PASSWORD не заданы"}, ensure_ascii=False)
+
+        try:
+            from playwright.async_api import async_playwright
+        except ImportError:
+            return json.dumps({"success": False, "error": "playwright not installed"})
+
+        try:
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(headless=True)
+                page = await browser.new_page()
+
+                # Login
+                await page.goto(f"{self.base_url}/login")
+                await page.wait_for_load_state("domcontentloaded")
+                await page.fill("#username", self.rdm_login)
+                await page.fill("#password", self.rdm_password)
+                await page.click('button[type="submit"]')
+                await page.wait_for_timeout(2000)
+                if "/login" in page.url:
+                    await browser.close()
+                    return json.dumps({"success": False, "error": "Login failed"})
+
+                modules_url = f"{self.base_url}/projects/{project}/settings?tab=modules"
+                await page.goto(modules_url, wait_until="domcontentloaded")
+                await page.wait_for_timeout(2000)
+
+                body_text = await page.evaluate("() => document.body.innerText")
+                if "403" in body_text:
+                    await browser.close()
+                    return json.dumps({"success": False, "error": "403 Forbidden"})
+
+                # Enable custom menu checkbox
+                cb_sel = "#project_easy_has_custom_menu"
+                if await page.locator(cb_sel).count() > 0 and not await page.is_checked(cb_sel):
+                    await page.check(cb_sel)
+                    await page.locator('input[type="submit"][value="Сохранить"]').first.click()
+                    await page.wait_for_load_state("domcontentloaded")
+                    await page.wait_for_timeout(2000)
+                    await page.goto(modules_url, wait_until="domcontentloaded")
+                    await page.wait_for_timeout(2000)
+
+                # Delete existing custom items (clean slate)
+                await page.evaluate("() => window.scrollTo(0, document.body.scrollHeight)")
+                await page.wait_for_timeout(500)
+
+                custom_items = await page.evaluate("""() => {
+                    return Array.from(document.querySelectorAll('tr')).map(row => {
+                        const deleteLink = Array.from(row.querySelectorAll('a')).find(a => a.textContent.trim() === 'Удалить');
+                        if (!deleteLink) return null;
+                        const name = row.querySelector('td')?.textContent?.trim();
+                        return { name, deleteHref: deleteLink.href };
+                    }).filter(Boolean);
+                }""")
+
+                for item in custom_items:
+                    page.once("dialog", lambda d: d.accept())
+                    await page.evaluate("""href => {
+                        const link = Array.from(document.querySelectorAll('a')).find(a => a.href === href);
+                        if (link) link.click();
+                    }""", item["deleteHref"])
+                    await page.wait_for_timeout(1000)
+                    await page.goto(modules_url, wait_until="domcontentloaded")
+                    await page.wait_for_timeout(1000)
+                    await page.evaluate("() => window.scrollTo(0, document.body.scrollHeight)")
+                    await page.wait_for_timeout(300)
+
+                # Add new items via modal
+                created = 0
+                for item in items:
+                    await page.goto(modules_url, wait_until="domcontentloaded")
+                    await page.wait_for_timeout(1500)
+                    await page.evaluate("() => window.scrollTo(0, document.body.scrollHeight)")
+                    await page.wait_for_timeout(300)
+
+                    add_btn = page.locator("a").filter(has_text="Добавить пункт настраиваемого меню")
+                    if await add_btn.count() > 0:
+                        await add_btn.first.click(force=True)
+                    else:
+                        continue
+
+                    try:
+                        await page.wait_for_selector("#easy_custom_project_menu_name", timeout=5000)
+                    except Exception:
+                        await page.wait_for_timeout(2000)
+
+                    name_field = page.locator("#easy_custom_project_menu_name")
+                    if await name_field.count() > 0:
+                        await name_field.fill(item["name"])
+                        url_field = page.locator("#easy_custom_project_menu_url")
+                        if await url_field.count() > 0 and item.get("url"):
+                            await url_field.fill(item["url"])
+
+                        await page.evaluate("""() => {
+                            const form = document.querySelector('#ajax-modal form, .ui-dialog form, form[action*="easy_custom_project_menu"]');
+                            if (form && window.jQuery) window.jQuery(form).trigger('submit');
+                            else if (form) form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+                        }""")
+                        await page.wait_for_timeout(2000)
+                        created += 1
+
+                await browser.close()
+                return json.dumps({"success": True, "project": project, "created": created,
+                                   "deleted": len(custom_items)}, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"success": False, "error": str(e)[:200]}, ensure_ascii=False)
+
+    # ── Playwright: Inspect custom fields ─────────────────
+
+    async def _inspect_cfs(self, p: dict) -> str:
+        """Инспекция кастомных полей проекта через Playwright."""
+        project = p["project"]
+
+        if not self.rdm_login or not self.rdm_password:
+            return json.dumps({"success": False, "error": "RDM_LOGIN/RDM_PASSWORD не заданы"}, ensure_ascii=False)
+
+        try:
+            from playwright.async_api import async_playwright
+        except ImportError:
+            return json.dumps({"success": False, "error": "playwright not installed"})
+
+        try:
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(headless=True)
+                page = await browser.new_page()
+
+                # Login
+                await page.goto(f"{self.base_url}/login")
+                await page.fill("#username", self.rdm_login)
+                await page.fill("#password", self.rdm_password)
+                await page.click('button[type="submit"]')
+                await page.wait_for_timeout(2000)
+
+                result = {"project": project, "settings": {}, "edit": {}}
+
+                # Settings page
+                await page.goto(f"{self.base_url}/projects/{project}/settings", wait_until="domcontentloaded")
+                await page.wait_for_timeout(3000)
+
+                result["settings"] = await page.evaluate("""() => {
+                    const tabs = Array.from(document.querySelectorAll('a'))
+                        .filter(a => a.href && a.href.includes('/settings'))
+                        .map(a => a.textContent.trim() + ' -> ' + a.href).slice(0, 10);
+                    const selects = Array.from(document.querySelectorAll('select'))
+                        .map(s => s.name).filter(n => n.includes('custom'));
+                    return { tabs, customSelects: selects, url: location.href };
+                }""")
+
+                # Edit page
+                await page.goto(f"{self.base_url}/projects/{project}/edit", wait_until="domcontentloaded")
+                await page.wait_for_timeout(2000)
+
+                CF_IDS = [241, 242, 243, 247, 249, 378, 152]
+                result["edit"] = await page.evaluate(f"""() => {{
+                    const cfIds = {CF_IDS};
+                    const selects = [];
+                    for (const sel of document.querySelectorAll('select')) {{
+                        if (sel.name.includes('custom') || cfIds.some(id => sel.name.includes(String(id)))) {{
+                            const opts = Array.from(sel.options).slice(0, 8).map(o => o.value + '|' + o.textContent.trim());
+                            selects.push({{ name: sel.name, id: sel.id, val: sel.value, opts }});
+                        }}
+                    }}
+                    return {{ url: location.href, selects, totalSelects: document.querySelectorAll('select').length }};
+                }}""")
+
+                await browser.close()
+                return json.dumps(result, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"success": False, "error": str(e)[:200]}, ensure_ascii=False)
 
     # ═══════════════════════════════════════════════════════
     # CREATE DEAL PROJECT (5 phases)
