@@ -986,7 +986,13 @@ function formatText(text) {
   text = text.replace(/\[File:[^\]]*\][\s\S]*?\[\/File\]/g, '');
   text = text.replace(/\[File:[^\]]*\]/g, '');
   text = text.replace(/\[Image:[^\]]*\]/g, '');
-  text = text.replace(/\[file:[^\]]*\]/g, '');
+  text = text.replace(/\[file:([^:]+):([^\]]+)\]/g, function(m, id, name) {
+    var ext = name.split('.').pop().toLowerCase();
+    var url = '/api/files/' + id + '/' + encodeURIComponent(name);
+    if (['png','jpg','jpeg','gif','webp','svg','bmp'].indexOf(ext) >= 0)
+      return '<img class="msg-image" src="' + url + '" onclick="window.open(this.src)" alt="' + name + '">';
+    return '<a class="msg-file" href="' + url + '" target="_blank">' + name + '</a>';
+  });
   text = text.trim();
   text = text.replace(/```(\w*)\n?([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
   text = text.replace(/`([^`]+)`/g, '<code style="background:var(--bg);padding:2px 6px;border-radius:4px;font-family:var(--mono);font-size:13px">$1</code>');
