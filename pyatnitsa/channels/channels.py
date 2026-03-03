@@ -83,6 +83,8 @@ class MaxChannel(BaseChannel):
         
         self._bot = Bot(self.token)
         self._dp = Dispatcher()
+        self._bot_username = None
+        self._bot_id = None
         
         @self._dp.bot_started()
         async def on_start(event: BotStarted):
@@ -98,25 +100,59 @@ class MaxChannel(BaseChannel):
         
         @self._dp.message_created()
         async def on_message(event: MessageCreated):
-            # maxapi structure:
-            # event.message.recipient.chat_id — ID чата
-            # event.message.sender.user_id — ID отправителя
-            # event.message.body.mid — ID сообщения
-            # event.message.body.text — текст
-            
             m = event.message
             text = m.body.text if m.body else None
             mid = m.body.mid if m.body else str(uuid.uuid4())
             chat_id = str(m.recipient.chat_id) if m.recipient else "0"
             user_id = str(m.sender.user_id) if m.sender else "unknown"
-            
+
+            # Кеш bot info
+            if self._bot_username is None:
+                try:
+                    me = await self._bot.get_me()
+                    self._bot_username = (me.username or "").lower()
+                    self._bot_id = me.user_id
+                except Exception:
+                    self._bot_username = ""
+                    self._bot_id = 0
+
+            # Фильтрация в групповых чатах
+            addressed = True
+            try:
+                from maxapi.enums.chat_type import ChatType
+                is_group = m.recipient and m.recipient.chat_type == ChatType.CHAT
+            except Exception:
+                is_group = False
+
+            if is_group:
+                txt = text or ""
+                is_command = txt.startswith("/")
+                is_mention = self._bot_username and f"@{self._bot_username}" in txt.lower()
+                # В MAX нет reply_to как в TG, проверяем только команды и упоминания
+                addressed = is_command or is_mention
+
+            # Убираем @mention из текста
+            clean_text = text or ""
+            if self._bot_username and f"@{self._bot_username}" in clean_text.lower():
+                import re
+                clean_text = re.sub(f"@{re.escape(self._bot_username)}", "", clean_text, flags=re.IGNORECASE).strip()
+
+            sender_name = ""
+            if m.sender:
+                sender_name = getattr(m.sender, "first_name", "") or ""
+                ln = getattr(m.sender, "last_name", "") or ""
+                if ln:
+                    sender_name = f"{sender_name} {ln}".strip()
+
             msg = Message(
                 id=mid,
                 channel=self.name,
                 user_id=user_id,
                 chat_id=chat_id,
-                text=text,
+                text=clean_text,
+                listen_only=not addressed,
                 role=MessageRole.USER,
+                raw={"sender_name": sender_name},
             )
             await self._dispatch(msg)
         
