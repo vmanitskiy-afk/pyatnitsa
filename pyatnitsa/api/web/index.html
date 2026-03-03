@@ -203,7 +203,7 @@ body {
   color: var(--accent);
 }
 .msg-file:hover { background: var(--surface); }
-.msg-image { max-width: 300px; border-radius: 8px; margin-top: 6px; cursor: pointer; }
+.msg-image { display: block; max-width: 300px; border-radius: 8px; margin-top: 6px; margin-bottom: 6px; cursor: pointer; }
 .msg-image:hover { opacity: 0.9; }
 
 .header-btn {
@@ -929,7 +929,7 @@ function sendMessage() {
         }
         return '<a class="msg-file" href="' + f.url + '" target="_blank"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>' + f.name + '</a>';
       }).join('');
-      addMsg('user', msgText + fileHtml);
+      addMsg('user', fileHtml + msgText);
 
       var fileRefs = uploaded.map(function(f) { return '[file:' + f.id + ':' + f.name + ']'; }).join(' ');
       ws.send(JSON.stringify({ text: (msgText + ' ' + fileRefs).trim(), attachments: uploaded }));
