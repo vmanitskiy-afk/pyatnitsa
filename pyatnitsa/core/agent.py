@@ -28,6 +28,11 @@ SYSTEM_PROMPT = """Ты - Пятница, персональный AI-ассис
 - Если не знаешь ответ - скажи об этом, не выдумывай
 - Запоминай важные факты о пользователе для будущих разговоров
 
+Работа с файлами:
+- Когда пользователь прикрепляет файлы, их содержимое в блоках [File: ...][/File]
+- Для прикрепления файла к задаче Redmine используй путь из поля path
+- Можешь анализировать и отвечать на вопросы по содержимому файлов
+
 {memory_context}
 
 {summary_context}
@@ -138,7 +143,7 @@ class Agent:
             if file_path:
                 extracted = await extract_text(file_path, att.mime_type)
                 if extracted:
-                    parts.append(f"[File: {fname}]\n{extracted}\n[/File]")
+                    parts.append(f"[File: {fname} | path: {file_path}]\n{extracted}\n[/File]")
                     if self.file_store and att.url:
                         url_parts = (att.url or "").split("/")
                         if len(url_parts) >= 4:
