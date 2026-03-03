@@ -8,8 +8,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Form
+from fastapi.responses import HTMLResponse, JSONResponse, Response as RawResponse
 from pydantic import BaseModel
 
 import structlog
@@ -25,15 +25,17 @@ _memory_store = None
 
 
 _conversation_store = None
+_file_store = None
 
 
-def inject_dependencies(agent, settings_store, memory_store, conversation_store=None):
+def inject_dependencies(agent, settings_store, memory_store, conversation_store=None, file_store=None):
     """Вызывается из main.py после инициализации."""
-    global _agent, _settings_store, _memory_store, _conversation_store
+    global _agent, _settings_store, _memory_store, _conversation_store, _file_store
     _agent = agent
     _settings_store = settings_store
     _memory_store = memory_store
     _conversation_store = conversation_store
+    _file_store = file_store
 
 
 # ─── Health ──────────────────────────────────────────────────
@@ -123,12 +125,25 @@ async def websocket_chat(ws: WebSocket):
             try:
                 from pyatnitsa.core.models import Message, MessageRole
 
+                # Парсим вложения если есть
+                raw_attachments = payload.get("attachments", [])
+                from pyatnitsa.core.models import Attachment
+                attachments = []
+                for a in raw_attachments:
+                    attachments.append(Attachment(
+                        type="image" if (a.get("mime_type") or "").startswith("image/") else "file",
+                        url=a.get("url"),
+                        filename=a.get("name"),
+                        mime_type=a.get("mime_type"),
+                    ))
+
                 msg = Message(
                     id=str(uuid.uuid4()),
                     channel="web",
                     user_id=user_id,
                     chat_id="web",
                     text=text,
+                    attachments=attachments,
                     role=MessageRole.USER,
                 )
 
@@ -174,6 +189,41 @@ async def rest_chat(body: ChatRequest):
     response = await _agent.handle_message(msg)
     return {"text": response.text}
 
+
+
+
+@app.post("/api/upload")
+async def upload_file(
+    file: UploadFile = File(...),
+    user_id: str = Form("web_default"),
+    chat_id: int | None = Form(None),
+):
+    if not _file_store:
+        return JSONResponse({"error": "File store not initialized"}, 503)
+    try:
+        data = await file.read()
+        result = await _file_store.save_file(
+            data=data, original_name=file.filename or "file",
+            user_id=user_id, channel="web", chat_id=chat_id, mime_type=file.content_type,
+        )
+        return result
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, 400)
+    except Exception as e:
+        logger.error("upload_error", error=str(e))
+        return JSONResponse({"error": str(e)}, 500)
+
+
+@app.get("/api/files/{file_id}/{filename}")
+async def download_file(file_id: str, filename: str):
+    if not _file_store:
+        return JSONResponse({"error": "File store not initialized"}, 503)
+    result = await _file_store.get_file_data(file_id)
+    if not result:
+        return JSONResponse({"error": "File not found"}, 404)
+    data, mime_type, original_name = result
+    return RawResponse(content=data, media_type=mime_type,
+        headers={"Content-Disposition": f"inline; filename=\"{original_name}\""})
 
 
 # Chats API

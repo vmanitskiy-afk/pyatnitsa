@@ -23,6 +23,7 @@ from pyatnitsa.channels.channels import MaxChannel, TelegramChannel
 from pyatnitsa.skills.skills import SkillLoader
 from pyatnitsa.memory.store import MemoryStore
 from pyatnitsa.memory.conversations import ConversationStore
+from pyatnitsa.memory.files import FileStore
 from pyatnitsa.scheduler.heartbeat import Heartbeat
 from pyatnitsa.api.server import app as fastapi_app, inject_dependencies
 
@@ -54,6 +55,9 @@ async def run():
     # Хранилище чатов (использует ту же БД)
     conversation_store = ConversationStore(db=memory._db)
     await conversation_store.init()
+
+    file_store = FileStore(db=memory._db)
+    await file_store.init()
 
     # Читаем credentials из settings_store (веб-панель может их обновить)
     gc_creds = settings.llm.gigachat_credentials or await settings_store.get("llm.gigachat_credentials")
@@ -140,6 +144,7 @@ async def run():
         settings_store=settings_store,
         memory_store=memory,
         conversation_store=conversation_store,
+        file_store=file_store,
     )
 
     # ─── Channels (опционально) ──────────────────────────────

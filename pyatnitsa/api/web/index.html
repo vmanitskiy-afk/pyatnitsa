@@ -150,6 +150,62 @@ body {
 }
 
 
+
+.clip-btn {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 6px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  transition: color 0.2s;
+}
+.clip-btn:hover { color: var(--accent); }
+
+.file-preview {
+  padding: 8px 24px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.file-preview-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--text);
+}
+.file-preview-item .remove {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-weight: bold;
+}
+.file-preview-item .remove:hover { color: #ef4444; }
+
+.msg-file {
+  margin-top: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  text-decoration: none;
+  color: var(--accent);
+}
+.msg-file:hover { background: var(--surface); }
+.msg-image { max-width: 300px; border-radius: 8px; margin-top: 6px; cursor: pointer; }
+.msg-image:hover { opacity: 0.9; }
+
 .header-btn {
   background: none;
   border: 1px solid var(--border);
@@ -515,8 +571,13 @@ body {
       <div class="messages" id="messages">
         <div class="msg system">Подключение к серверу...</div>
       </div>
+      <div id="filePreview" class="file-preview" style="display:none;"></div>
       <div class="chat-input-area">
         <div class="chat-input-wrap">
+          <input type="file" id="fileInput" style="display:none" onchange="handleFileSelect(this)" multiple accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.json,.xml,.zip">
+          <button type="button" class="clip-btn" onclick="document.getElementById('fileInput').click()" title="Прикрепить файл">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
+          </button>
           <textarea class="chat-input" id="chatInput" placeholder="Сообщение Пятнице..." rows="1" onkeydown="handleKey(event)"></textarea>
           <button class="send-btn" id="sendBtn" onclick="sendMessage()" disabled>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
@@ -802,13 +863,73 @@ function newChat() {
     .catch(function(e) { toast('Ошибка создания чата', true); });
 }
 
+
+var pendingFiles = [];
+
+function handleFileSelect(input) {
+  for (var i = 0; i < input.files.length; i++) {
+    pendingFiles.push(input.files[i]);
+  }
+  input.value = '';
+  renderFilePreview();
+}
+
+function renderFilePreview() {
+  var el = document.getElementById('filePreview');
+  if (pendingFiles.length === 0) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  el.style.display = 'flex';
+  el.innerHTML = pendingFiles.map(function(f, i) {
+    var size = f.size < 1024 ? f.size + ' B' : (f.size < 1048576 ? Math.round(f.size/1024) + ' КБ' : (f.size/1048576).toFixed(1) + ' МБ');
+    return '<div class="file-preview-item"><span>' + f.name + '</span><span style="color:var(--text-secondary);">' + size + '</span><span class="remove" onclick="removeFile(' + i + ')">&times;</span></div>';
+  }).join('');
+}
+
+function removeFile(idx) {
+  pendingFiles.splice(idx, 1);
+  renderFilePreview();
+}
+
+async function uploadFiles() {
+  var results = [];
+  for (var i = 0; i < pendingFiles.length; i++) {
+    var fd = new FormData();
+    fd.append('file', pendingFiles[i]);
+    fd.append('user_id', userId);
+    try {
+      var resp = await fetch('/api/upload', { method: 'POST', body: fd });
+      var data = await resp.json();
+      if (data.id) results.push(data);
+    } catch(e) { toast('Ошибка загрузки: ' + pendingFiles[i].name, true); }
+  }
+  pendingFiles = [];
+  renderFilePreview();
+  return results;
+}
+
 function sendMessage() {
   var input = document.getElementById('chatInput');
   var text = input.value.trim();
-  if (!text || !connected) return;
+  if ((!text && pendingFiles.length === 0) || !connected) return;
 
-  addMsg('user', text);
-  ws.send(JSON.stringify({ text: text }));
+  if (pendingFiles.length > 0) {
+    var fileNames = pendingFiles.map(function(f) { return f.name; });
+    uploadFiles().then(function(uploaded) {
+      var msgText = text || '';
+      var fileHtml = uploaded.map(function(f) {
+        if (f.mime_type && f.mime_type.startsWith('image/')) {
+          return '<img class="msg-image" src="' + f.url + '" onclick="window.open(this.src)" alt="' + f.name + '">';
+        }
+        return '<a class="msg-file" href="' + f.url + '" target="_blank"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>' + f.name + '</a>';
+      }).join('');
+      addMsg('user', msgText + fileHtml);
+
+      var fileRefs = uploaded.map(function(f) { return '[file:' + f.id + ':' + f.name + ']'; }).join(' ');
+      ws.send(JSON.stringify({ text: (msgText + ' ' + fileRefs).trim(), attachments: uploaded }));
+    });
+  } else {
+    addMsg('user', text);
+    ws.send(JSON.stringify({ text: text }));
+  }
   input.value = '';
   input.style.height = 'auto';
 }
@@ -937,6 +1058,19 @@ function fetchStatus() {
 }
 
 // ─── Init ───────────────────────────────────────────────────
+// Drag & drop
+var msgArea = document.getElementById('messages');
+msgArea.addEventListener('dragover', function(e) { e.preventDefault(); msgArea.style.border = '2px dashed var(--accent)'; });
+msgArea.addEventListener('dragleave', function(e) { msgArea.style.border = 'none'; });
+msgArea.addEventListener('drop', function(e) {
+  e.preventDefault();
+  msgArea.style.border = 'none';
+  if (e.dataTransfer.files.length > 0) {
+    for (var i = 0; i < e.dataTransfer.files.length; i++) pendingFiles.push(e.dataTransfer.files[i]);
+    renderFilePreview();
+  }
+});
+
 connectWS();
 </script>
 </body>
