@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import time
 import json
@@ -191,6 +192,41 @@ class RedmineSkill(BaseSkill):
             if ('403' in str(e) or '401' in str(e)) and self.admin_key:
                 return await self._api(method, path, body, params, api_key=self.admin_key)
             raise
+
+    # ─── File upload ──────────────────────────────────────
+
+    async def _api_upload(self, file_path: str) -> dict:
+        """POST /uploads.json → {token, filename, size}."""
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"File not found: {file_path}")
+        filename = os.path.basename(file_path)
+        with open(file_path, "rb") as f:
+            data = f.read()
+        url = f"{self.base_url}/uploads.json?filename={filename}"
+        resp = await self._client.post(
+            url, content=data,
+            headers={"Content-Type": "application/octet-stream",
+                     "X-Redmine-API-Key": self.api_key},
+        )
+        if resp.status_code >= 400:
+            raise Exception(f"Upload failed ({resp.status_code}): {resp.text[:200]}")
+        result = resp.json()
+        return {"token": result["upload"]["token"], "filename": filename, "size": len(data)}
+
+    async def _upload_and_attach(self, issue_id: int, file_path: str,
+                                  filename: str | None = None,
+                                  description: str | None = None) -> dict:
+        """Загружает файл и прикрепляет к задаче."""
+        attach_fn = filename or os.path.basename(file_path)
+        upload = await self._api_upload(file_path)
+        entry: dict[str, Any] = {
+            "token": upload["token"], "filename": attach_fn,
+            "content_type": "application/octet-stream",
+        }
+        if description:
+            entry["description"] = description
+        await self._api("PUT", f"/issues/{issue_id}.json", body={"issue": {"uploads": [entry]}})
+        return {"filename": attach_fn, "size": upload["size"], "description": description}
 
     # ─── User resolution ──────────────────────────────────
 
@@ -565,7 +601,7 @@ class RedmineSkill(BaseSkill):
             }),
             LLMTool("redmine.create_deal_project",
                 "Создаёт проект сделки (5 фаз): проект, роли, CF, Паспорт, Расчёт. "
-                "Обязательно: name, description, counterparty. Опционально: ap, rp, manager (ФИО).", {
+                "Обязательно: name, description, counterparty. Опционально: ap, rp, manager, budget, curator, sfk.", {
                 "type": "object", "properties": {
                     "name": {"type": "string"}, "description": {"type": "string"},
                     "counterparty": {"type": "string"}, "counterparty_id": {"type": "integer"},
@@ -574,7 +610,16 @@ class RedmineSkill(BaseSkill):
                     "manager": {"type": "string"}, "manager_id": {"type": "integer"},
                     "stage": {"type": "string", "default": "Проектирование (расчёт)"},
                     "parent_id": {"type": "integer", "default": 25},
+                    "finish": {"type": "string", "description": "Дата завершения YYYY-MM-DD"},
+                    "template": {"type": "string", "default": "trade_v2"},
+                    "budget": {"type": "string", "description": "Бюджет (CF 249)"},
+                    "curator": {"type": "string", "description": "Куратор (CF 378)"},
+                    "sfk": {"type": "string", "description": "СФК (CF 396 на Паспорте)"},
                     "no_calculation": {"type": "boolean", "default": False},
+                    "attach_passport": {"type": "array", "items": {"type": "string"},
+                                        "description": "Файлы для Паспорта (path или path|filename)"},
+                    "attach_calculation": {"type": "array", "items": {"type": "string"},
+                                           "description": "Файлы для Расчёта (path или path|filename)"},
                 }, "required": ["name", "description", "counterparty"],
             }),
             LLMTool("redmine.members", "Участники проекта с ролями", {
@@ -598,6 +643,14 @@ class RedmineSkill(BaseSkill):
                     "name": {"type": "string", "description": "Название нового проекта"},
                     "parent_id": {"type": "integer", "description": "ID родительского проекта"},
                 }, "required": ["template", "name"],
+            }),
+            LLMTool("redmine.attach", "Загрузить файл и прикрепить к задаче", {
+                "type": "object", "properties": {
+                    "issue_id": {"type": "integer", "description": "ID задачи"},
+                    "file_path": {"type": "string", "description": "Путь к файлу"},
+                    "filename": {"type": "string", "description": "Имя файла (опционально)"},
+                    "description": {"type": "string", "description": "Описание вложения"},
+                }, "required": ["issue_id", "file_path"],
             }),
             LLMTool("redmine.apply_custom_menu",
                 "Применить настраиваемое меню к проекту (Playwright). "
@@ -636,6 +689,7 @@ class RedmineSkill(BaseSkill):
                 "create_deal_project": self._create_deal_project,
                 "members": self._members, "me": self._me, "time_entries": self._time_entries,
                 "create_from_template": self._exec_create_from_template,
+                "attach": self._attach,
                 "apply_custom_menu": self._apply_custom_menu,
                 "inspect_cfs": self._inspect_cfs,
             }.get(action)
@@ -865,6 +919,22 @@ class RedmineSkill(BaseSkill):
         )
         return json.dumps(result, ensure_ascii=False)
 
+
+    async def _attach(self, p):
+        """Загружает файл и прикрепляет к задаче."""
+        try:
+            result = await self._upload_and_attach(
+                issue_id=int(p["issue_id"]),
+                file_path=p["file_path"],
+                filename=p.get("filename"),
+                description=p.get("description"),
+            )
+            return json.dumps({"success": True, "issue_id": p["issue_id"],
+                               "attachment": result}, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"success": False, "issue_id": p["issue_id"],
+                               "file": p["file_path"], "message": str(e)[:200]}, ensure_ascii=False)
+
     # ── Playwright: Apply custom menu ─────────────────────
 
     async def _apply_custom_menu(self, p: dict) -> str:
@@ -1055,7 +1125,10 @@ class RedmineSkill(BaseSkill):
         stage_value = STAGE_MAP.get(stage, stage)
         skip_calc = p.get("no_calculation", False)
         finish_date = p.get("finish", f"{dt.date.today().year}-12-31")
+        template_ident = p.get("template", "trade_v2")
         log_lines = []
+        all_warnings = []
+
         def log(msg):
             log_lines.append(msg)
             logger.info("deal_project", msg=msg)
@@ -1070,9 +1143,9 @@ class RedmineSkill(BaseSkill):
             try:
                 cd = await self._api("GET", f"/easy_contacts/{cid}.json")
                 c = cd.get("easy_contact") or cd
-                org = next((f["value"] for f in c.get("custom_fields",[]) if f.get("id")==2), "")
-                fn = f"{c.get('lastname','')} {c.get('firstname','')}".strip()
-                inn = next((f["value"] for f in c.get("custom_fields",[]) if f.get("id")==6), None)
+                org = next((f["value"] for f in c.get("custom_fields", []) if f.get("id") == 2), "")
+                fn = f"{c.get('lastname', '')} {c.get('firstname', '')}".strip()
+                inn = next((f["value"] for f in c.get("custom_fields", []) if f.get("id") == 6), None)
                 cp_info = {"id": cid, "name": org or fn or p.get("counterparty", f"#{cid}"), "inn": inn}
             except Exception:
                 cp_info = {"id": cid, "name": p.get("counterparty", f"#{cid}"), "inn": None}
@@ -1087,47 +1160,50 @@ class RedmineSkill(BaseSkill):
         if cp_info:
             log(f"  ✓ Контрагент: {cp_info.get('name')} (#{cp_info.get('id')})")
 
-        # Users (HARD STOP per field)
+        # Users — опциональны, HARD STOP только если указано но не резолвится
         fields = [("АП", p.get("ap"), p.get("ap_id"), "ap_id"),
                    ("РП", p.get("rp"), p.get("rp_id"), "rp_id"),
                    ("Менеджер", p.get("manager"), p.get("manager_id"), "manager_id")]
         ru = {}
         for label, nv, idv, idf in fields:
             if idv:
-                ru[label] = {"id": int(idv), "name": nv or f"User #{idv}"}; continue
+                ru[label] = {"id": int(idv), "name": nv or f"User #{idv}"}
+                continue
             if not nv:
-                log(f"  · {label}: пропущен"); continue
+                log(f"  · {label}: не указан — пропускаем")
+                continue
             cands = await self._resolve_user(nv, parent_id)
             resolved, error = resolve_choice(label, nv, cands, hint=f"Укажите {idf}.")
             if not resolved:
                 return json.dumps(error, ensure_ascii=False)
             ru[label] = resolved
-        ap_id = ru.get("АП",{}).get("id")
-        rp_id = ru.get("РП",{}).get("id")
-        mgr_id = ru.get("Менеджер",{}).get("id")
-        for l in ("АП","РП","Менеджер"):
-            if l in ru: log(f"  ✓ {l}: {ru[l]['name']} (#{ru[l]['id']})")
+        ap_id = ru.get("АП", {}).get("id")
+        rp_id = ru.get("РП", {}).get("id")
+        mgr_id = ru.get("Менеджер", {}).get("id")
+        for l in ("АП", "РП", "Менеджер"):
+            if l in ru:
+                log(f"  ✓ {l}: {ru[l]['name']} (#{ru[l]['id']})")
 
         # Пресейл group (SOFT)
         presale_gid = None
         members = await self._get_members(parent_id)
         for m in members:
             if m.get("group") and "пресейл" in m["group"]["name"].lower():
-                presale_gid = m["group"]["id"]; break
+                presale_gid = m["group"]["id"]
+                break
 
         calc_watcher_ids = []
         for wn in CALC_FIXED_WATCHERS:
             u = await self._resolve_user_soft(wn, parent_id)
-            if u: calc_watcher_ids.append(u["id"])
+            if u:
+                calc_watcher_ids.append(u["id"])
 
         log("Phase 0 done.\n")
 
         # ── PHASE 1: Create project from template ──
         log("[1/5] Creating project from template...")
         ident = slugify_identifier(p["name"])
-        template_ident = p.get("template", "trade_v2")
 
-        # Пробуем создать через Playwright (шаблон)
         tpl_result = await self._create_from_template(
             template_ident=template_ident,
             name=p["name"],
@@ -1140,7 +1216,6 @@ class RedmineSkill(BaseSkill):
             pident = tpl_result["identifier"]
             log(f"  ✓ Template #{pid} ({pident})")
         else:
-            # Fallback: прямое создание через API (без шаблона)
             log(f"  ⚠ Template failed: {tpl_result.get('error', '?')[:80]}")
             log("  Fallback: creating via API...")
             try:
@@ -1159,67 +1234,176 @@ class RedmineSkill(BaseSkill):
         for key, uid, roles in [("rp", rp_id, DEAL_ROLE_MAP["rp"]),
                                   ("ap", ap_id, DEAL_ROLE_MAP["ap"]),
                                   ("manager", mgr_id, DEAL_ROLE_MAP["manager"])]:
-            if not uid: continue
+            if not uid:
+                continue
             r = await self._set_user_roles(pid, uid, roles)
             mr[key] = {"user_id": uid, **r}
             log(f"  ✓ {key} (#{uid}): {r.get('action')}")
 
-        # ── PHASE 3: Custom fields ──
+        # ── PHASE 3: Custom fields (SOFT — Playwright scrape + fuzzy match) ──
         log("[3/5] Custom fields...")
-        cfs = []
-        if p.get("rp"): cfs.append({"id": 241, "value": p["rp"]})
-        if p.get("manager"): cfs.append({"id": 242, "value": p["manager"]})
-        if p.get("ap"): cfs.append({"id": 243, "value": p["ap"]})
-        cfs.append({"id": 247, "value": stage_value})
-        if cfs:
-            try:
-                await self._api("PUT", f"/projects/{pid}.json", body={"project": {"custom_fields": cfs}})
-                log(f"  ✓ {len(cfs)} CFs saved")
-            except Exception as e:
-                log(f"  ⚠ CF: {str(e)[:80]}")
+        cf_inputs = {}
+        if p.get("rp"):
+            cf_inputs[241] = p["rp"]
+        if p.get("manager"):
+            cf_inputs[242] = p["manager"]
+        if p.get("ap"):
+            cf_inputs[243] = p["ap"]
+        cf_inputs[247] = stage_value
+        if p.get("budget"):
+            cf_inputs[249] = p["budget"]
+        if p.get("curator"):
+            cf_inputs[378] = p["curator"]
 
-        # ── PHASE 4: Passport ──
+        cf_warnings = []
+        cf_options = {}
+        try:
+            from playwright.async_api import async_playwright
+            rdm_login = os.getenv("RDM_LOGIN", "aione")
+            rdm_password = os.getenv("RDM_PASSWORD", "")
+
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(headless=True)
+                bpage = await browser.new_page()
+                await bpage.goto(f"{self.base_url}/login")
+                await bpage.wait_for_load_state("domcontentloaded")
+                await bpage.fill("#username", rdm_login)
+                await bpage.fill("#password", rdm_password)
+                await bpage.click('button[type="submit"]')
+                try:
+                    await bpage.wait_for_load_state("networkidle")
+                except Exception:
+                    pass
+                await bpage.wait_for_timeout(2000)
+
+                await bpage.goto(f"{self.base_url}/projects/{pident}/settings/info",
+                                 wait_until="domcontentloaded")
+                await bpage.wait_for_timeout(2000)
+
+                cf_ids_list = list(cf_inputs.keys())
+                cf_options = await bpage.evaluate(
+                    """(cfIds) => {
+                    const result = {};
+                    for (const cfId of cfIds) {
+                        const sel = document.querySelector(
+                            'select[name="project[custom_field_values][' + cfId + ']"]');
+                        if (sel) {
+                            result[cfId] = Array.from(sel.options)
+                                .filter(o => o.value !== '')
+                                .map(o => ({ value: o.value, text: o.textContent.trim() }));
+                        }
+                    }
+                    return result;
+                    }""", cf_ids_list)
+                await browser.close()
+        except Exception as e:
+            log(f"  ⚠ CF scrape failed: {str(e)[:80]}")
+
+        def resolve_cf(cf_id, inp):
+            if not inp:
+                return None
+            opts_list = cf_options.get(str(cf_id)) or cf_options.get(cf_id) or []
+            if not opts_list:
+                return inp
+            exact = next((o for o in opts_list if o["value"] == inp), None)
+            if exact:
+                return exact["value"]
+            exact_text = next((o for o in opts_list if o["text"] == inp), None)
+            if exact_text:
+                return exact_text["value"]
+            lower = inp.lower()
+            matches = [o for o in opts_list
+                       if lower in o["value"].lower() or lower in o["text"].lower()]
+            if len(matches) == 1:
+                return matches[0]["value"]
+            if len(matches) > 1:
+                cf_warnings.append({"cf_id": cf_id, "input": inp, "error": "ambiguous",
+                                    "candidates": [m["value"] for m in matches[:5]]})
+                return None
+            cf_warnings.append({"cf_id": cf_id, "input": inp, "error": "not_found"})
+            return None
+
+        cf_updates = []
+        for cf_id, inp in cf_inputs.items():
+            resolved_val = resolve_cf(cf_id, inp)
+            if resolved_val is not None:
+                cf_updates.append({"id": cf_id, "value": resolved_val})
+                log(f'  ✓ cf_{cf_id}: "{inp}" → "{resolved_val}"')
+            else:
+                w = next((w for w in cf_warnings if w["cf_id"] == cf_id), None)
+                if w and w["error"] == "ambiguous":
+                    log(f'  ⚠ cf_{cf_id}: "{inp}" → ambiguous. Field left empty.')
+                else:
+                    log(f'  ⚠ cf_{cf_id}: "{inp}" → not found. Field left empty.')
+
+        if cf_updates:
+            try:
+                await self._api("PUT", f"/projects/{pid}.json",
+                                body={"project": {"custom_fields": cf_updates}})
+                log(f"  ✓ Saved {len(cf_updates)} CFs")
+            except Exception as e:
+                log(f"  ⚠ CF PUT failed: {str(e)[:80]}")
+
+        # ── PHASE 4: Passport + Calculation ──
         log("[4/5] Passport...")
         pcf = []
         if cp_info:
-            if cp_info.get("id"): pcf.append({"id": 118, "value": str(cp_info["id"])})
+            if cp_info.get("id"):
+                pcf.append({"id": 118, "value": str(cp_info["id"])})
             if cp_info.get("name"):
                 pcf.append({"id": 117, "value": cp_info["name"]})
                 pcf.append({"id": 399, "value": cp_info["name"]})
         pcf.extend([{"id": 114, "value": stage_value}, {"id": 248, "value": stage}])
+        if p.get("sfk"):
+            pcf.append({"id": 396, "value": str(p["sfk"])})
+
         pass_id = None
         try:
             ib = {"project_id": pid, "tracker_id": 41, "subject": "Паспорт проекта",
-                   "description": p.get("description",""), "due_date": finish_date, "custom_fields": pcf}
-            if ap_id: ib["assigned_to_id"] = ap_id
+                   "description": p.get("description", ""), "due_date": finish_date,
+                   "custom_fields": pcf}
+            if ap_id:
+                ib["assigned_to_id"] = ap_id
             d = await self._api_safe("POST", "/issues.json", body={"issue": ib})
             pass_id = d["issue"]["id"]
             log(f"  ✓ #{pass_id}")
         except Exception as e:
             log(f"  ⚠ {str(e)[:80]}")
-        if pass_id:
-            pw = set()
-            if rp_id and rp_id != ap_id: pw.add(rp_id)
-            if mgr_id and mgr_id != ap_id: pw.add(mgr_id)
-            for wid in pw:
-                try: await self._api_safe("POST", f"/issues/{pass_id}/watchers.json", body={"user_id": wid})
-                except Exception: pass
-            if p.get("description"):
-                try: await self._api_safe("PUT", f"/issues/{pass_id}.json", body={"issue": {"notes": p["description"]}})
-                except Exception: pass
 
-        # ── PHASE 5: Calculation ──
+        if pass_id:
+            pw_set = set()
+            if rp_id and rp_id != ap_id:
+                pw_set.add(rp_id)
+            if mgr_id and mgr_id != ap_id:
+                pw_set.add(mgr_id)
+            for wid in pw_set:
+                try:
+                    await self._api_safe("POST", f"/issues/{pass_id}/watchers.json",
+                                         body={"user_id": wid})
+                except Exception:
+                    pass
+            if p.get("description"):
+                try:
+                    await self._api_safe("PUT", f"/issues/{pass_id}.json",
+                                         body={"issue": {"notes": p["description"]}})
+                except Exception:
+                    pass
+
+        # Calculation
         calc_id = None
         if not skip_calc:
             log("[5/5] Calculation...")
             calc_due = (dt.date.today() + dt.timedelta(days=2)).isoformat()
             try:
                 cb = {"project_id": pid, "tracker_id": 28, "subject": "Расчёт",
-                      "description": p.get("description",""), "due_date": calc_due,
-                      "custom_fields": [{"id": 157, "value": "Расчёт"},
-                                         {"id": 336, "value": (cp_info or {}).get("name", p.get("counterparty",""))}]}
-                if presale_gid: cb["assigned_to_id"] = presale_gid
-                elif rp_id: cb["assigned_to_id"] = rp_id
+                      "description": p.get("description", ""), "due_date": calc_due,
+                      "custom_fields": [
+                          {"id": 157, "value": "Расчёт"},
+                          {"id": 336, "value": (cp_info or {}).get("name", p.get("counterparty", ""))}]}
+                if presale_gid:
+                    cb["assigned_to_id"] = presale_gid
+                elif rp_id:
+                    cb["assigned_to_id"] = rp_id
                 d = await self._api_safe("POST", "/issues.json", body={"issue": cb})
                 calc_id = d["issue"]["id"]
                 log(f"  ✓ #{calc_id}")
@@ -1227,28 +1411,105 @@ class RedmineSkill(BaseSkill):
                 log(f"  ⚠ {str(e)[:80]}")
             if calc_id:
                 cw = set()
-                if rp_id: cw.add(rp_id)
-                if presale_gid: cw.add(presale_gid)
-                for wid in calc_watcher_ids: cw.add(wid)
+                if rp_id:
+                    cw.add(rp_id)
+                if presale_gid:
+                    cw.add(presale_gid)
+                for wid in calc_watcher_ids:
+                    cw.add(wid)
                 for wid in cw:
-                    try: await self._api_safe("POST", f"/issues/{calc_id}/watchers.json", body={"user_id": wid})
-                    except Exception: pass
+                    try:
+                        await self._api_safe("POST", f"/issues/{calc_id}/watchers.json",
+                                             body={"user_id": wid})
+                    except Exception:
+                        pass
         else:
             log("[5/5] Calculation skipped")
+
+        # ── PHASE 3.5: Attach files ──
+        passport_attachments = []
+        calc_attachments = []
+        attach_warnings = []
+
+        def parse_attach_arg(raw):
+            """Парсит 'path|filename' → (path, filename) или (path, None)."""
+            pipe_idx = raw.rfind("|")
+            if pipe_idx > 0 and pipe_idx < len(raw) - 1:
+                return raw[:pipe_idx], raw[pipe_idx + 1:]
+            return raw, None
+
+        for raw in (p.get("attach_passport") or []):
+            fp, fn = parse_attach_arg(raw)
+            if pass_id:
+                try:
+                    att = await self._upload_and_attach(pass_id, fp, filename=fn)
+                    passport_attachments.append(att)
+                    log(f"  ✓ Passport attach: {att['filename']}")
+                except Exception as e:
+                    attach_warnings.append({"kind": "attachment", "issue_id": pass_id,
+                                            "file": fp, "message": str(e)[:120]})
+            else:
+                attach_warnings.append({"kind": "attachment", "issue_id": None,
+                                        "file": fp, "message": "Passport task was not created"})
+
+        for raw in (p.get("attach_calculation") or []):
+            fp, fn = parse_attach_arg(raw)
+            if skip_calc:
+                attach_warnings.append({"kind": "attachment", "issue_id": None,
+                                        "file": fp, "message": "Calculation skipped"})
+            elif calc_id:
+                try:
+                    att = await self._upload_and_attach(calc_id, fp, filename=fn)
+                    calc_attachments.append(att)
+                    log(f"  ✓ Calc attach: {att['filename']}")
+                except Exception as e:
+                    attach_warnings.append({"kind": "attachment", "issue_id": calc_id,
+                                            "file": fp, "message": str(e)[:120]})
+            else:
+                attach_warnings.append({"kind": "attachment", "issue_id": None,
+                                        "file": fp, "message": "Calculation task was not created"})
+
+        all_warnings = cf_warnings + attach_warnings
 
         # ── Output ──
         result = {
             "success": True,
             "project": {"id": pid, "identifier": pident, "name": p["name"],
                          "url": f"{self.base_url}/projects/{pident}", "parent_id": parent_id},
+            "template": template_ident,
             "fields": {}, "counterparty": cp_info or {"note": "N/A"},
-            "tasks": {"passport": {"id": pass_id, "url": f"{self.base_url}/issues/{pass_id}"} if pass_id else "failed"},
-            "memberships": mr, "log": log_lines,
+            "tasks": {}, "memberships": mr, "log": log_lines,
         }
-        if ap_id: result["fields"]["ap"] = p.get("ap"); result["fields"]["ap_id"] = ap_id
-        if rp_id: result["fields"]["rp"] = p.get("rp"); result["fields"]["rp_id"] = rp_id
-        if mgr_id: result["fields"]["manager"] = p.get("manager"); result["fields"]["manager_id"] = mgr_id
+        if ap_id:
+            result["fields"]["ap"] = p.get("ap")
+            result["fields"]["ap_id"] = ap_id
+        if rp_id:
+            result["fields"]["rp"] = p.get("rp")
+            result["fields"]["rp_id"] = rp_id
+        if mgr_id:
+            result["fields"]["manager"] = p.get("manager")
+            result["fields"]["manager_id"] = mgr_id
         result["fields"]["stage"] = stage
+        result["fields"]["finish"] = finish_date
+
+        if pass_id:
+            t = {"id": pass_id, "url": f"{self.base_url}/issues/{pass_id}"}
+            if passport_attachments:
+                t["attachments"] = passport_attachments
+            result["tasks"]["passport"] = t
+        else:
+            result["tasks"]["passport"] = "failed"
+
         if not skip_calc:
-            result["tasks"]["calculation"] = {"id": calc_id, "url": f"{self.base_url}/issues/{calc_id}"} if calc_id else "failed"
+            if calc_id:
+                t = {"id": calc_id, "url": f"{self.base_url}/issues/{calc_id}"}
+                if calc_attachments:
+                    t["attachments"] = calc_attachments
+                result["tasks"]["calculation"] = t
+            else:
+                result["tasks"]["calculation"] = "failed"
+
+        if all_warnings:
+            result["warnings"] = all_warnings
+
         return json.dumps(result, ensure_ascii=False)
