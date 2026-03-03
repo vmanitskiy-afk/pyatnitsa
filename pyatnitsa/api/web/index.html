@@ -1067,13 +1067,29 @@ function fetchStatus() {
 }
 
 // ─── Init ───────────────────────────────────────────────────
-// Drag & drop
-var msgArea = document.getElementById('messages');
-msgArea.addEventListener('dragover', function(e) { e.preventDefault(); msgArea.style.border = '2px dashed var(--accent)'; });
-msgArea.addEventListener('dragleave', function(e) { msgArea.style.border = 'none'; });
-msgArea.addEventListener('drop', function(e) {
+// Drag & drop — на всю страницу
+var dragCounter = 0;
+var dropOverlay = document.createElement('div');
+dropOverlay.id = 'dropOverlay';
+dropOverlay.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;gap:12px;"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg><span style="font-size:18px;color:var(--text);">Перетащите файлы сюда</span></div>';
+dropOverlay.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;justify-content:center;align-items:center;backdrop-filter:blur(4px);';
+document.body.appendChild(dropOverlay);
+
+document.addEventListener('dragenter', function(e) {
   e.preventDefault();
-  msgArea.style.border = 'none';
+  dragCounter++;
+  dropOverlay.style.display = 'flex';
+});
+document.addEventListener('dragleave', function(e) {
+  e.preventDefault();
+  dragCounter--;
+  if (dragCounter <= 0) { dragCounter = 0; dropOverlay.style.display = 'none'; }
+});
+document.addEventListener('dragover', function(e) { e.preventDefault(); });
+document.addEventListener('drop', function(e) {
+  e.preventDefault();
+  dragCounter = 0;
+  dropOverlay.style.display = 'none';
   if (e.dataTransfer.files.length > 0) {
     for (var i = 0; i < e.dataTransfer.files.length; i++) pendingFiles.push(e.dataTransfer.files[i]);
     renderFilePreview();
