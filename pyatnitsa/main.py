@@ -91,6 +91,23 @@ async def run():
     # ─── Skills ──────────────────────────────────────────────
     # Определяем путь к навыкам: если указан абсолютный — используем его,
     # иначе ищем относительно пакета pyatnitsa/skills/examples/
+    # Пробрасываем настройки интеграций из веб-панели в env для скиллов
+    _int_map = {
+        "integrations.redmine_url": "REDMINE_URL",
+        "integrations.redmine_api_key": "REDMINE_API_KEY",
+        "integrations.redmine_admin_key": "REDMINE_ADMIN_KEY",
+        "integrations.rdm_login": "RDM_LOGIN",
+        "integrations.rdm_password": "RDM_PASSWORD",
+        "integrations.bitrix_webhook_url": "BITRIX_WEBHOOK_URL",
+        "integrations.onec_base_url": "ONEC_BASE_URL",
+        "integrations.onec_username": "ONEC_USERNAME",
+        "integrations.onec_password": "ONEC_PASSWORD",
+    }
+    for _sk, _ek in _int_map.items():
+        _v = await settings_store.get(_sk)
+        if _v:
+            os.environ[_ek] = _v
+
     skills_path = settings.skills_dir
     if not os.path.isabs(skills_path):
         pkg_dir = os.path.dirname(os.path.abspath(__file__))

@@ -36,6 +36,9 @@ DEFAULTS = {
     # Integrations
     "integrations.redmine_url": "",
     "integrations.redmine_api_key": "",
+    "integrations.redmine_admin_key": "",
+    "integrations.rdm_login": "",
+    "integrations.rdm_password": "",
     "integrations.bitrix_webhook_url": "",
     "integrations.onec_base_url": "",
     "integrations.onec_username": "",
@@ -52,6 +55,8 @@ SECRET_KEYS = {
     "llm.gigachat_credentials",
     "llm.claude_api_key",
     "integrations.redmine_api_key",
+    "integrations.redmine_admin_key",
+    "integrations.rdm_password",
     "integrations.onec_password",
 }
 
