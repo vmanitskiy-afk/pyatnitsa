@@ -174,8 +174,42 @@ class TelegramChannel(BaseChannel):
         self._bot = Bot(token=self.token)
         self._dp = Dispatcher()
         
+        # Кеш username бота
+        self._bot_username = None
+        self._bot_id = None
+
         @self._dp.message()
         async def on_message(tg_message: types.Message):
+            # Кешируем info бота (один раз)
+            if self._bot_username is None:
+                me = await self._bot.me()
+                self._bot_username = (me.username or "").lower()
+                self._bot_id = me.id
+
+            # В группах отвечаем только на команды, @упоминания и реплаи
+            if tg_message.chat.type in ("group", "supergroup"):
+                txt = tg_message.text or ""
+                is_command = txt.startswith("/")
+                is_reply_to_bot = (
+                    tg_message.reply_to_message
+                    and tg_message.reply_to_message.from_user
+                    and tg_message.reply_to_message.from_user.id == self._bot_id
+                )
+                is_mention = self._bot_username and f"@{self._bot_username}" in txt.lower()
+                if not is_mention and tg_message.entities:
+                    for ent in tg_message.entities:
+                        if ent.type == "mention":
+                            m_text = txt[ent.offset:ent.offset + ent.length].lower()
+                            if m_text == f"@{self._bot_username}":
+                                is_mention = True
+                                break
+                if not (is_command or is_reply_to_bot or is_mention):
+                    return
+
+            # Убираем @mention из текста
+            raw_text = tg_message.text or tg_message.caption or ""
+            clean_text = raw_text.replace(f"@{self._bot_username}", "").strip() if self._bot_username else raw_text
+
             from pyatnitsa.core.models import Attachment
             attachments = []
             tg_file = tg_message.document or (tg_message.photo[-1] if tg_message.photo else None)
@@ -195,7 +229,7 @@ class TelegramChannel(BaseChannel):
                 channel=self.name,
                 user_id=str(tg_message.from_user.id) if tg_message.from_user else "unknown",
                 chat_id=str(tg_message.chat.id),
-                text=tg_message.text or tg_message.caption or "",
+                text=clean_text,
                 attachments=attachments,
                 role=MessageRole.USER,
             )
