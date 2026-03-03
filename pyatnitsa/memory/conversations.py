@@ -166,6 +166,25 @@ class ConversationStore:
 
     # ─── Сообщения ─────────────────────────────────────────
 
+    async def activate_chat(self, chat_id: int, user_id: str):
+        await self._db.execute(
+            "UPDATE chats SET is_active = 0 WHERE user_id = ? AND is_active = 1",
+            (user_id,),
+        )
+        await self._db.execute(
+            "UPDATE chats SET is_active = 1 WHERE id = ? AND user_id = ?",
+            (chat_id, user_id),
+        )
+        await self._db.commit()
+        cursor = await self._db.execute(
+            "SELECT c.*, COUNT(m.id) as message_count FROM chats c"
+            " LEFT JOIN chat_messages m ON m.chat_id = c.id"
+            " WHERE c.id = ? GROUP BY c.id",
+            (chat_id,),
+        )
+        row = await cursor.fetchone()
+        return self._row_to_chat(row) if row else None
+
     async def add_message(
         self, chat_id: int, role: str, content: str | list | dict
     ) -> int:

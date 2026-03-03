@@ -192,6 +192,17 @@ async def new_chat_api(user_id: str = "web_default"):
     chat = await _conversation_store.create_chat(user_id, "web")
     return chat.to_dict()
 
+@app.post("/api/chats/{chat_id}/activate")
+async def activate_chat_api(chat_id: int, user_id: str = "web_default"):
+    if not _conversation_store:
+        return JSONResponse({"error": "Conversations not initialized"}, 503)
+    chat = await _conversation_store.activate_chat(chat_id, user_id)
+    if not chat:
+        return JSONResponse({"error": "Chat not found"}, 404)
+    return chat.to_dict()
+
+
+
 
 # ─── System Info ─────────────────────────────────────────────
 

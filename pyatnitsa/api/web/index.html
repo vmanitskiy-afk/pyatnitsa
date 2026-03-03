@@ -762,6 +762,17 @@ function showHistory() {
           var active = ch.is_active ? ' <span style="color:var(--accent);font-size:11px;">\u25cf текущий</span>' : '';
           item.innerHTML = '<div style="font-weight:500;color:var(--text);">' + title + active + '</div>' +
             '<div style="color:var(--text-secondary);font-size:11px;margin-top:2px;">' + count + ' сообщ. \u00b7 ' + date + '</div>';
+          item.onclick = function() {
+            dd.remove();
+            if (ch.is_active) return;
+            fetch('/api/chats/' + ch.id + '/activate?user_id=' + encodeURIComponent(userId), { method: 'POST' })
+              .then(function(r) { return r.json(); })
+              .then(function() {
+                document.getElementById('messages').innerHTML = '';
+                if (ws && connected) ws.send(JSON.stringify({ type: 'init', user_id: userId }));
+              })
+              .catch(function(e) { toast('Ошибка переключения', true); });
+          };
           dd.appendChild(item);
         });
       }
