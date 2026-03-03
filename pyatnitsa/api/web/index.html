@@ -738,18 +738,57 @@ function connectWS() {
 
 
 function showHistory() {
-  if (ws && connected) {
-    ws.send(JSON.stringify({ text: '/history' }));
-  }
+  var existing = document.getElementById('historyDropdown');
+  if (existing) { existing.remove(); return; }
+
+  fetch('/api/chats?user_id=' + encodeURIComponent(userId) + '&limit=10')
+    .then(function(r) { return r.json(); })
+    .then(function(chats) {
+      var dd = document.createElement('div');
+      dd.id = 'historyDropdown';
+      dd.style.cssText = 'position:absolute;top:56px;right:20px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 0;z-index:100;min-width:280px;max-height:400px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,0.4);';
+
+      if (!chats || chats.length === 0) {
+        dd.innerHTML = '<div style="padding:12px 16px;color:var(--text-secondary);font-size:13px;">Нет чатов</div>';
+      } else {
+        chats.forEach(function(ch) {
+          var item = document.createElement('div');
+          item.style.cssText = 'padding:10px 16px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border);transition:background 0.15s;';
+          item.onmouseenter = function() { this.style.background = 'var(--surface)'; };
+          item.onmouseleave = function() { this.style.background = 'none'; };
+          var title = ch.title || 'Без названия';
+          var date = (ch.updated_at || ch.created_at || '').substring(0, 10);
+          var count = ch.message_count || 0;
+          var active = ch.is_active ? ' <span style="color:var(--accent);font-size:11px;">\u25cf текущий</span>' : '';
+          item.innerHTML = '<div style="font-weight:500;color:var(--text);">' + title + active + '</div>' +
+            '<div style="color:var(--text-secondary);font-size:11px;margin-top:2px;">' + count + ' сообщ. \u00b7 ' + date + '</div>';
+          dd.appendChild(item);
+        });
+      }
+
+      document.querySelector('.chat-header').style.position = 'relative';
+      document.querySelector('.chat-header').appendChild(dd);
+      setTimeout(function() {
+        document.addEventListener('click', function closeDD(e) {
+          if (!dd.contains(e.target)) { dd.remove(); document.removeEventListener('click', closeDD); }
+        });
+      }, 10);
+    })
+    .catch(function(e) { toast('Ошибка загрузки истории', true); });
 }
 
 function newChat() {
-  if (ws && connected) {
-    ws.send(JSON.stringify({ text: '/new' }));
-    document.getElementById('messages').innerHTML = '';
-    document.getElementById('chatTitle').textContent = 'Пятница';
-    addMsg('system', 'Новый чат создан');
-  }
+  fetch('/api/chats/new?user_id=' + encodeURIComponent(userId), { method: 'POST' })
+    .then(function(r) { return r.json(); })
+    .then(function(chat) {
+      document.getElementById('messages').innerHTML = '';
+      document.getElementById('chatTitle').textContent = 'Пятница';
+      addMsg('system', 'Новый чат создан');
+      if (ws && connected) {
+        ws.send(JSON.stringify({ type: 'init', user_id: userId }));
+      }
+    })
+    .catch(function(e) { toast('Ошибка создания чата', true); });
 }
 
 function sendMessage() {
