@@ -782,20 +782,17 @@ function saveSettings() {
   })
     .then(function(res) { return res.json(); })
     .then(function() {
-      // Apply — hot-reload LLM
+      toast('Настройки сохранены. Перезапуск...');
+      setStatus('warn', 'Перезапуск...');
       return fetch('/api/apply', { method: 'POST' });
     })
-    .then(function(res) { return res.json(); })
-    .then(function(data) {
-      if (data.status === 'ok') {
-        toast('Настройки применены! LLM: ' + data.providers.join(', '));
-        fetchStatus();
-      } else {
-        toast(data.message || 'Ошибка применения', true);
-      }
+    .then(function() {
+      // Сервер перезапустится — WebSocket переподключится автоматически
     })
     .catch(function(e) {
-      toast('Ошибка сохранения', true);
+      // fetch может упасть из-за рестарта — это нормально
+      toast('Перезапуск сервера...');
+      setStatus('warn', 'Перезапуск...');
     });
 }
 
