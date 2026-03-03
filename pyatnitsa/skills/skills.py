@@ -52,67 +52,104 @@ class SkillLoader:
         self.skills: dict[str, BaseSkill] = {}
     
     async def load_all(self) -> dict[str, BaseSkill]:
-        """Загружает все навыки из директории skills/."""
-        
+        """Загружает все навыки из директории skills/ (рекурсивно).
+
+        Структура:
+            skills/
+            ├── browser/
+            │   ├── browser.py   ← BrowserSkill
+            │   └── SKILL.md
+            ├── examples/
+            │   ├── redmine/
+            │   │   ├── redmine.py   ← RedmineSkill
+            │   │   └── SKILL.md
+        """
         if not self.skills_dir.exists():
             logger.warning("skills_dir_not_found", path=str(self.skills_dir))
             return self.skills
-        
-        for skill_dir in self.skills_dir.iterdir():
-            if skill_dir.is_dir() and not skill_dir.name.startswith("_"):
-                await self._load_skill(skill_dir)
-        
+
+        await self._scan_dir(self.skills_dir)
         logger.info("skills_loaded", count=len(self.skills), names=list(self.skills.keys()))
         return self.skills
+
+    async def _scan_dir(self, directory: Path):
+        """Рекурсивно сканирует директорию на наличие навыков."""
+        for entry in sorted(directory.iterdir()):
+            if not entry.is_dir() or entry.name.startswith(("_", ".")):
+                continue
+
+            # Проверяем есть ли .py файлы с BaseSkill в этой папке
+            py_files = list(entry.glob("*.py"))
+            has_skill_files = any(
+                not f.name.startswith("_") for f in py_files
+            )
+
+            if has_skill_files:
+                await self._load_skill(entry)
+            else:
+                # Это промежуточная папка (examples/, custom/...) — идём глубже
+                await self._scan_dir(entry)
     
     async def _load_skill(self, skill_dir: Path):
-        """Загружает один навык из директории."""
-        
-        skill_py = skill_dir / "skill.py"
-        skill_md = skill_dir / "SKILL.md"
-        
-        if not skill_py.exists():
-            logger.warning("skill_py_not_found", skill_dir=str(skill_dir))
+        """Загружает один навык из директории.
+
+        Сканирует все .py файлы в папке навыка и ищет первый класс-
+        наследник BaseSkill. Файл может называться как угодно:
+        redmine.py, browser.py, и т.д.
+        """
+        # Собираем все .py файлы в папке
+        py_files = sorted(skill_dir.glob("*.py"))
+        if not py_files:
+            logger.warning("no_py_files", skill_dir=str(skill_dir))
             return
-        
-        try:
-            # Загружаем Python модуль
-            spec = importlib.util.spec_from_file_location(
-                f"skills.{skill_dir.name}", str(skill_py)
-            )
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            
-            # Ищем класс-наследник BaseSkill
-            skill_class = None
-            for attr_name in dir(module):
-                attr = getattr(module, attr_name)
-                if (
-                    isinstance(attr, type)
-                    and issubclass(attr, BaseSkill)
-                    and attr is not BaseSkill
-                ):
-                    skill_class = attr
-                    break
-            
-            if skill_class is None:
-                logger.warning("no_skill_class_found", skill_dir=str(skill_dir))
-                return
-            
-            # Читаем SKILL.md если есть
-            skill_description = ""
-            if skill_md.exists():
-                skill_description = skill_md.read_text(encoding="utf-8")
-            
-            # Создаём экземпляр
-            skill = skill_class(config={"description_md": skill_description})
-            await skill.on_load()
-            
-            self.skills[skill.name] = skill
-            logger.info("skill_loaded", name=skill.name, version=skill.version)
-            
-        except Exception as e:
-            logger.error("skill_load_error", skill_dir=str(skill_dir), error=str(e))
+
+        skill_md = skill_dir / "SKILL.md"
+
+        for skill_py in py_files:
+            # Пропускаем __init__.py, тесты и т.п.
+            if skill_py.name.startswith("_"):
+                continue
+
+            try:
+                spec = importlib.util.spec_from_file_location(
+                    f"skills.{skill_dir.name}.{skill_py.stem}", str(skill_py)
+                )
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+
+                # Ищем класс-наследник BaseSkill
+                skill_class = None
+                for attr_name in dir(module):
+                    attr = getattr(module, attr_name)
+                    if (
+                        isinstance(attr, type)
+                        and issubclass(attr, BaseSkill)
+                        and attr is not BaseSkill
+                    ):
+                        skill_class = attr
+                        break
+
+                if skill_class is None:
+                    continue  # этот .py не содержит навык — пробуем следующий
+
+                # Читаем SKILL.md если есть
+                skill_description = ""
+                if skill_md.exists():
+                    skill_description = skill_md.read_text(encoding="utf-8")
+
+                # Создаём экземпляр
+                skill = skill_class(config={"description_md": skill_description})
+                await skill.on_load()
+
+                self.skills[skill.name] = skill
+                logger.info("skill_loaded", name=skill.name, version=skill.version,
+                            file=skill_py.name)
+                return  # нашли навык — выходим
+
+            except Exception as e:
+                logger.error("skill_load_error", file=str(skill_py), error=str(e))
+
+        logger.warning("no_skill_class_found", skill_dir=str(skill_dir))
     
     def get_all_tools(self) -> list[LLMTool]:
         """Собирает инструменты со всех навыков."""
