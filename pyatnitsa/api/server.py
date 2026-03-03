@@ -225,16 +225,23 @@ async def upload_file(
         return JSONResponse({"error": str(e)}, 500)
 
 
-@app.get("/api/files/{file_id}/{filename}")
+@app.get("/api/files/{file_id}/{filename:path}")
 async def download_file(file_id: str, filename: str):
     if not _file_store:
         return JSONResponse({"error": "File store not initialized"}, 503)
-    result = await _file_store.get_file_data(file_id)
-    if not result:
-        return JSONResponse({"error": "File not found"}, 404)
-    data, mime_type, original_name = result
-    return RawResponse(content=data, media_type=mime_type,
-        headers={"Content-Disposition": f"inline; filename=\"{original_name}\""})
+    try:
+        result = await _file_store.get_file_data(file_id)
+        if not result:
+            return JSONResponse({"error": "File not found"}, 404)
+        data, mime_type, original_name = result
+        import urllib.parse
+        encoded_name = urllib.parse.quote(original_name)
+        disp = "inline; filename*=UTF-8''" + encoded_name
+        return RawResponse(content=data, media_type=mime_type or "application/octet-stream",
+            headers={"Content-Disposition": disp})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return JSONResponse({"error": str(e)}, 500)
 
 
 # Chats API

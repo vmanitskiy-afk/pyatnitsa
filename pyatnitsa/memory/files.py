@@ -86,6 +86,9 @@ class FileStore:
         if not meta:
             return None
         path = Path(meta["stored_path"])
+        # Если относительный путь — пробуем от upload_dir
+        if not path.is_absolute():
+            path = self._upload_dir / path.name
         if not path.exists():
             return None
         return path.read_bytes(), meta["mime_type"], meta["original_name"]
