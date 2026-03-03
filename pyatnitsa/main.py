@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import signal
 import sys
 from pathlib import Path
@@ -88,7 +89,19 @@ async def run():
         )
 
     # ─── Skills ──────────────────────────────────────────────
-    skills = SkillLoader(skills_dir=settings.skills_dir)
+    # Определяем путь к навыкам: если указан абсолютный — используем его,
+    # иначе ищем относительно пакета pyatnitsa/skills/examples/
+    skills_path = settings.skills_dir
+    if not os.path.isabs(skills_path):
+        pkg_dir = os.path.dirname(os.path.abspath(__file__))
+        candidates = [
+            os.path.join(pkg_dir, "skills", "examples"),  # pyatnitsa/skills/examples/
+            os.path.join(pkg_dir, "skills"),               # pyatnitsa/skills/
+            os.path.join(os.getcwd(), skills_path),        # cwd/skills/
+        ]
+        skills_path = next((c for c in candidates if os.path.isdir(c)), skills_path)
+
+    skills = SkillLoader(skills_dir=skills_path)
     await skills.load_all()
 
     # ─── Agent ───────────────────────────────────────────────
