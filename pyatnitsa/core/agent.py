@@ -82,8 +82,8 @@ class Agent:
             if cmd_response:
                 return cmd_response
 
-        # Обработка вложений — извлечение текста для LLM
-        file_context = await self._process_attachments(message.attachments)
+        # Обработка вложений — извлечение текста + картинок для LLM
+        file_context, images = await self._process_attachments(message.attachments)
         if file_context:
             text = f"{text}\n\n{file_context}" if text else file_context
 
@@ -120,6 +120,25 @@ class Agent:
         )
 
         history = [LLMMessage(role=m["role"], content=m["content"]) for m in llm_messages]
+
+        # Если есть картинки — делаем мультимодальное сообщение
+        if images:
+            import base64
+            last_user_content = history[-1].content if history else text
+            multimodal = []
+            if isinstance(last_user_content, str) and last_user_content:
+                multimodal.append({"type": "text", "text": last_user_content})
+            for img in images:
+                b64 = base64.b64encode(img["data"]).decode("utf-8")
+                multimodal.append({
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": img["mime_type"], "data": b64},
+                })
+            if history:
+                history[-1].content = multimodal
+            else:
+                history.append(LLMMessage(role="user", content=multimodal))
+
         response_text = await self._run_agent_loop(user_id, system, history, tools, chat.id)
         await conv.add_message(chat.id, "assistant", response_text)
         await conv.maybe_set_title(chat.id, self._generate_title)
@@ -131,12 +150,15 @@ class Agent:
         return Response(text=response_text)
 
     async def _process_attachments(self, attachments: list):
+        """Returns (text_context, images_list)."""
         if not attachments:
-            return None
+            return None, []
         parts = []
+        images = []
         for att in attachments:
             fname = att.filename or "file"
             file_path = None
+
             if self.file_store and hasattr(att, "url") and att.url:
                 url_parts = (att.url or "").split("/")
                 if len(url_parts) >= 4 and url_parts[1] == "api" and url_parts[2] == "files":
@@ -150,10 +172,18 @@ class Agent:
                 tmp.write(att.data)
                 tmp.close()
                 file_path = tmp.name
+
             if file_path:
-                # Абсолютный путь для Redmine и других скиллов
                 import os
                 abs_path = os.path.abspath(file_path)
+
+                # Картинки -> отдельно для vision
+                if (att.mime_type or "").startswith("image/"):
+                    raw = open(abs_path, "rb").read()
+                    images.append({"data": raw, "mime_type": att.mime_type, "filename": fname, "path": abs_path})
+                    parts.append(f"[Image: {fname} | path: {abs_path}]")
+                    continue
+
                 extracted = await extract_text(file_path, att.mime_type)
                 if extracted:
                     parts.append(f"[File: {fname} | path: {abs_path}]\n{extracted}\n[/File]")
@@ -162,11 +192,12 @@ class Agent:
                         if len(url_parts) >= 4:
                             await self.file_store.set_text_content(url_parts[3], extracted[:5000])
                 else:
-                    # Всё равно сообщаем путь — для аттача в Redmine
                     parts.append(f"[File: {fname} | path: {abs_path} | type: {att.mime_type or '?'}]")
             else:
-                parts.append(f"[File: {fname} ({att.mime_type or '?'}) — файл недоступен]")
-        return "\n\n".join(parts) if parts else None
+                parts.append(f"[File: {fname} ({att.mime_type or '?'}) -- file unavailable]")
+
+        text_ctx = "\n\n".join(parts) if parts else None
+        return text_ctx, images
 
     async def _handle_command(self, user_id, text, channel):
         cmd = text.split()[0].lower()

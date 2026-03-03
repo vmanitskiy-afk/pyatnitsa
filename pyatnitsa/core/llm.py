@@ -164,23 +164,43 @@ class GigaChatProvider(LLMProvider):
             
             # GigaChat принимает content только как строку
             content = msg.content
+            gc_attachments = None
             if isinstance(content, list):
-                # Собираем текстовые части из content-блоков
-                # Для tool_result — формируем текстовый ответ
                 text_parts = []
+                image_ids = []
                 for block in content:
                     if isinstance(block, dict):
                         if block.get("type") == "text":
                             text_parts.append(block["text"])
                         elif block.get("type") == "tool_result":
                             text_parts.append(f"Результат: {block.get('content', '')}")
+                        elif block.get("type") == "image":
+                            try:
+                                import base64 as b64mod
+                                src = block.get("source", {})
+                                img_data = b64mod.b64decode(src.get("data", ""))
+                                mime = src.get("media_type", "image/jpeg")
+                                ext = mime.split("/")[-1] if "/" in mime else "jpg"
+                                uploaded = await asyncio.get_event_loop().run_in_executor(
+                                    None, self.client.upload_file,
+                                    (f"image.{ext}", img_data, mime)
+                                )
+                                image_ids.append(uploaded.id_)
+                                logger.info("gigachat_image_uploaded", file_id=uploaded.id_)
+                            except Exception as e:
+                                logger.warning("gigachat_image_upload_err", error=str(e))
+                                text_parts.append("[Картинка — не удалось загрузить]")
                         elif block.get("type") == "tool_use":
-                            # Пропускаем tool_use в сообщениях для GigaChat
                             pass
                 content = "\n".join(text_parts) if text_parts else str(content)
+                if image_ids:
+                    gc_attachments = image_ids
             
             if content:  # не добавляем пустые сообщения
-                gc_messages.append(Messages(role=role, content=content))
+                m_kwargs = {"role": role, "content": content}
+                if gc_attachments:
+                    m_kwargs["attachments"] = gc_attachments
+                gc_messages.append(Messages(**m_kwargs))
         
         # Собираем функции (tools)
         gc_functions = None
