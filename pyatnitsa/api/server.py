@@ -89,24 +89,27 @@ async def websocket_chat(ws: WebSocket):
                         msgs = await _conversation_store.get_messages(chat.id)
                         history = []
                         for m in msgs:
-                            if m.role in ("user", "assistant"):
-                                ct = m.content
-                                try:
-                                    parsed = json.loads(ct)
-                                    if isinstance(parsed, list):
-                                        texts = [b.get("text", "") for b in parsed if isinstance(b, dict) and b.get("type") == "text"]
-                                        ct = " ".join(texts) if texts else ""
-                                    elif isinstance(parsed, dict):
-                                        ct = ""
-                                except (json.JSONDecodeError, TypeError):
-                                    pass
-                                import re as _hre
-                                ct = _hre.sub(r'\[File:.*?\[/File\]', '', ct, flags=_hre.DOTALL)
-                                ct = _hre.sub(r'\[File:[^\]]*\]', '', ct)
-                                ct = _hre.sub(r'\[Image:[^\]]*\]', '', ct)
-                                ct = ct.strip()
-                                if ct and ct.strip():
-                                    history.append({"role": m.role, "text": ct})
+                            if m.role not in ("user", "assistant"):
+                                continue
+                            ct = m.content
+                            try:
+                                parsed = json.loads(ct)
+                                if isinstance(parsed, list):
+                                    texts = [b.get("text","") for b in parsed if isinstance(b,dict) and b.get("type")=="text"]
+                                    ct = " ".join(t for t in texts if t)
+                                    if not ct: continue
+                                elif isinstance(parsed, dict): continue
+                            except (json.JSONDecodeError, TypeError): pass
+                            s = (ct or "").strip()
+                            if not s: continue
+                            if "tool_use" in s[:80] or "tool_result" in s[:80]: continue
+                            import re as _hre
+                            s = _hre.sub(r"\[File:[^\]]*\][\s\S]*?\[/File\]", "", s)
+                            s = _hre.sub(r"\[File:[^\]]*\]", "", s)
+                            s = _hre.sub(r"\[Image:[^\]]*\]", "", s)
+                            s = _hre.sub(r"\[file:[^\]]*\]", "", s)
+                            s = s.strip()
+                            if s: history.append({"role": m.role, "text": s})
                         await ws.send_text(json.dumps({"type": "history", "messages": history, "chat_title": chat.title}))
                     except Exception as e:
                         logger.error("ws_history_error", error=str(e))
