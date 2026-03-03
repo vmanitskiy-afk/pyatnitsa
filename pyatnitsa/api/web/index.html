@@ -980,6 +980,8 @@ function removeTyping() {
 
 function formatText(text) {
   if (!text) return '';
+  // Skip raw tool_use/tool_result JSON blocks
+  if (text.trim().indexOf('"type": "tool_') >= 0 || text.trim().indexOf("'type': 'tool_") >= 0) return '';
   // Убираем содержимое файлов из отображения
   text = text.replace(/\[File:[^\]]*\][\s\S]*?\[\/File\]/g, '');
   text = text.replace(/\[File:[^\]]*\]/g, '');
