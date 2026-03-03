@@ -29,8 +29,8 @@ SYSTEM_PROMPT = """Ты - Пятница, персональный AI-ассис
 - Запоминай важные факты о пользователе для будущих разговоров
 
 Работа с файлами:
-- Когда пользователь прикрепляет файлы, их содержимое в блоках [File: ...][/File]
-- Для прикрепления файла к задаче Redmine используй путь из поля path
+- Когда пользователь прикрепляет файлы, информация о них в блоках [File: name | path: /abs/path]
+- Каждый файл имеет абсолютный path — используй именно его для redmine.attach(file_path=...)
 - Можешь анализировать и отвечать на вопросы по содержимому файлов
 
 {memory_context}
@@ -141,17 +141,21 @@ class Agent:
                 tmp.close()
                 file_path = tmp.name
             if file_path:
+                # Абсолютный путь для Redmine и других скиллов
+                import os
+                abs_path = os.path.abspath(file_path)
                 extracted = await extract_text(file_path, att.mime_type)
                 if extracted:
-                    parts.append(f"[File: {fname} | path: {file_path}]\n{extracted}\n[/File]")
+                    parts.append(f"[File: {fname} | path: {abs_path}]\n{extracted}\n[/File]")
                     if self.file_store and att.url:
                         url_parts = (att.url or "").split("/")
                         if len(url_parts) >= 4:
                             await self.file_store.set_text_content(url_parts[3], extracted[:5000])
                 else:
-                    parts.append(f"[File: {fname} ({att.mime_type or '?'}) - no text]")
+                    # Всё равно сообщаем путь — для аттача в Redmine
+                    parts.append(f"[File: {fname} | path: {abs_path} | type: {att.mime_type or '?'}]")
             else:
-                parts.append(f"[File: {fname} ({att.mime_type or '?'})]")
+                parts.append(f"[File: {fname} ({att.mime_type or '?'}) — файл недоступен]")
         return "\n\n".join(parts) if parts else None
 
     async def _handle_command(self, user_id, text, channel):

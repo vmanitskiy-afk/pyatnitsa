@@ -644,10 +644,10 @@ class RedmineSkill(BaseSkill):
                     "parent_id": {"type": "integer", "description": "ID родительского проекта"},
                 }, "required": ["template", "name"],
             }),
-            LLMTool("redmine.attach", "Загрузить файл и прикрепить к задаче", {
+            LLMTool("redmine.attach", "Загрузить файл и прикрепить к задаче/сделке в Redmine. Используй абсолютный путь из контекста файлов [File: ... | path: ...]", {
                 "type": "object", "properties": {
-                    "issue_id": {"type": "integer", "description": "ID задачи"},
-                    "file_path": {"type": "string", "description": "Путь к файлу"},
+                    "issue_id": {"type": "integer", "description": "ID задачи/сделки в Redmine"},
+                    "file_path": {"type": "string", "description": "Абсолютный путь к файлу на диске (из поля path в контексте)"},
                     "filename": {"type": "string", "description": "Имя файла (опционально)"},
                     "description": {"type": "string", "description": "Описание вложения"},
                 }, "required": ["issue_id", "file_path"],
@@ -922,6 +922,7 @@ class RedmineSkill(BaseSkill):
 
     async def _attach(self, p):
         """Загружает файл и прикрепляет к задаче."""
+        logger.info("redmine_attach", issue_id=p.get("issue_id"), file_path=p.get("file_path"))
         try:
             result = await self._upload_and_attach(
                 issue_id=int(p["issue_id"]),
@@ -929,9 +930,12 @@ class RedmineSkill(BaseSkill):
                 filename=p.get("filename"),
                 description=p.get("description"),
             )
+            logger.info("redmine_attach_ok", issue_id=p["issue_id"])
             return json.dumps({"success": True, "issue_id": p["issue_id"],
                                "attachment": result}, ensure_ascii=False)
         except Exception as e:
+            logger.error("redmine_attach_error", issue_id=p.get("issue_id"),
+                         file_path=p.get("file_path"), error=str(e))
             return json.dumps({"success": False, "issue_id": p["issue_id"],
                                "file": p["file_path"], "message": str(e)[:200]}, ensure_ascii=False)
 

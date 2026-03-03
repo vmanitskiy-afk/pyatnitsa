@@ -41,7 +41,7 @@ class FileStore:
 
     def __init__(self, db: aiosqlite.Connection, upload_dir: str = "data/uploads"):
         self._db = db
-        self._upload_dir = Path(upload_dir)
+        self._upload_dir = Path(upload_dir).resolve()
 
     async def init(self):
         self._upload_dir.mkdir(parents=True, exist_ok=True)
