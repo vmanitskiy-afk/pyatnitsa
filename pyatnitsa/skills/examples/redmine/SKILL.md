@@ -38,6 +38,7 @@
 | Инструмент | Описание |
 |---|---|
 | `redmine.create_deal_project` | **Создание проекта сделки** — 5-фазная архитектура |
+| `redmine.create_from_template` | Создание проекта из шаблона EasyRedmine (Playwright) |
 
 ## Создание проекта сделки
 
@@ -67,3 +68,22 @@
 - `REDMINE_URL` — адрес EasyRedmine (https://rdm.example.com)
 - `REDMINE_API_KEY` — API-ключ пользователя
 - `REDMINE_ADMIN_KEY` — API-ключ администратора (опционально, для fallback)
+- `RDM_LOGIN` — логин для Playwright (браузерная автоматизация)
+- `RDM_PASSWORD` — пароль для Playwright
+
+### Playwright (шаблоны)
+
+EasyRedmine защищает создание проектов из шаблонов через CSRF — обычный API не работает.
+Навык использует Playwright (headless Chromium) для:
+1. Входа в EasyRedmine
+2. Открытия `/templates/{ident}/create`
+3. Заполнения формы (имя, идентификатор)
+4. Отправки и извлечения ID нового проекта
+
+Если Playwright недоступен (не установлен или нет логина/пароля), `create_deal_project` автоматически fallback'ится на прямое API-создание (без шаблона).
+
+Установка Playwright:
+```bash
+pip install playwright
+playwright install chromium
+```

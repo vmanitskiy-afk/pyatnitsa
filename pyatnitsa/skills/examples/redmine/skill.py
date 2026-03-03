@@ -141,6 +141,8 @@ class RedmineSkill(BaseSkill):
         self.base_url = os.getenv("REDMINE_URL", "").rstrip("/")
         self.api_key = os.getenv("REDMINE_API_KEY", "")
         self.admin_key = os.getenv("REDMINE_ADMIN_KEY", "")
+        self.rdm_login = os.getenv("RDM_LOGIN", "")
+        self.rdm_password = os.getenv("RDM_PASSWORD", "")
         if self.base_url and self.api_key:
             self._client = httpx.AsyncClient(
                 base_url=self.base_url,
@@ -265,6 +267,233 @@ class RedmineSkill(BaseSkill):
             except Exception as e:
                 return {"action": "error", "error": str(e)[:80]}
 
+    # ─── Playwright: create from template ───────────────────
+
+    async def _resolve_template_id(self, tpl_ident: str) -> int | None:
+        """Находит ID шаблона по идентификатору через API."""
+        # Прямые эндпоинты
+        for ep in [
+            f"/project_templates/{tpl_ident}.json",
+            f"/easy_project_templates/{tpl_ident}.json",
+            f"/projects/{tpl_ident}.json",
+        ]:
+            try:
+                data = await self._api("GET", ep)
+                tid = (data.get("project_template") or data.get("easy_project_template") or data.get("project") or {}).get("id")
+                if tid:
+                    logger.info("template_resolved", ident=tpl_ident, id=tid, via=ep)
+                    return tid
+            except Exception:
+                continue
+
+        # Листинг всех шаблонов
+        for ep in ["/project_templates.json", "/easy_project_templates.json"]:
+            try:
+                data = await self._api("GET", ep)
+                items = data.get("project_templates") or data.get("easy_project_templates") or []
+                found = next((t for t in items if t.get("identifier") == tpl_ident or t.get("name") == tpl_ident), None)
+                if found:
+                    logger.info("template_resolved", ident=tpl_ident, id=found["id"], via=f"list {ep}")
+                    return found["id"]
+            except Exception:
+                continue
+        return None
+
+    async def _create_from_template(
+        self, template_ident: str, name: str, identifier: str, parent_id: int | None = None,
+    ) -> dict:
+        """Создаёт проект из шаблона EasyRedmine через Playwright.
+
+        EasyRedmine template endpoints защищены CSRF — API не работает,
+        нужен браузер для заполнения формы /templates/{ident}/create.
+
+        Returns:
+            {"success": True, "id": int, "identifier": str, "name": str} или
+            {"success": False, "error": str}
+        """
+        # Шаг 1: Проверяем шаблон существует
+        tpl_id = await self._resolve_template_id(template_ident)
+        if not tpl_id:
+            return {"success": False, "error": f'Шаблон "{template_ident}" не найден.'}
+
+        # Шаг 2: Проверяем parent
+        if parent_id and not str(parent_id).isdigit():
+            try:
+                pd = await self._api("GET", f"/projects/{parent_id}.json")
+                parent_id = pd["project"]["id"]
+            except Exception:
+                pass
+
+        # Шаг 3: Playwright
+        if not self.rdm_login or not self.rdm_password:
+            return {"success": False, "error": "RDM_LOGIN и RDM_PASSWORD не заданы — Playwright недоступен."}
+
+        try:
+            from playwright.async_api import async_playwright
+        except ImportError:
+            return {"success": False, "error": "playwright не установлен. pip install playwright && playwright install chromium"}
+
+        new_project_id = None
+        new_ident = identifier
+
+        try:
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(headless=True)
+                page = await browser.new_page()
+
+                # Login
+                await page.goto(f"{self.base_url}/login")
+                await page.wait_for_load_state("domcontentloaded")
+                await page.fill("#username", self.rdm_login)
+                await page.fill("#password", self.rdm_password)
+                await page.click('button[type="submit"]')
+
+                # Ждём редиректа с /login
+                for _ in range(10):
+                    await page.wait_for_timeout(1000)
+                    if "/login" not in page.url:
+                        break
+                if "/login" in page.url:
+                    await browser.close()
+                    return {"success": False, "error": f"Playwright: не удалось войти (URL={page.url})"}
+
+                logger.info("playwright_logged_in", user=self.rdm_login)
+
+                # Открываем форму создания из шаблона
+                create_url = f"{self.base_url}/templates/{template_ident}/create"
+                if parent_id:
+                    create_url += f"?project[parent_id]={parent_id}"
+                logger.info("playwright_opening", url=create_url)
+
+                await page.goto(create_url, wait_until="domcontentloaded")
+                await page.wait_for_timeout(3000)
+
+                # Анализируем форму
+                form_info = await page.evaluate("""() => {
+                    const nameField = document.querySelector(
+                        '#project_name, input[name="project[name]"], input[name="template[project][][name]"]'
+                    );
+                    const identField = document.querySelector(
+                        '#project_identifier, input[name="project[identifier]"], input[name="template[project][][identifier]"]'
+                    );
+                    const submits = Array.from(document.querySelectorAll('input[type="submit"], button[type="submit"]'));
+                    const submitLabels = submits.map(s => s.value || s.textContent.trim());
+                    const isTemplateForm = !!document.querySelector('input[name="template[project][][identifier]"]');
+                    const errorEl = document.querySelector('#errorExplanation');
+                    return {
+                        hasName: !!nameField,
+                        hasIdent: !!identField,
+                        isTemplateForm,
+                        submitLabels,
+                        error: errorEl ? errorEl.textContent.trim().substring(0, 200) : '',
+                    };
+                }""")
+
+                logger.info("playwright_form", **form_info)
+
+                if not form_info["hasName"]:
+                    await browser.close()
+                    return {"success": False, "error": f"Форма шаблона не найдена на {create_url}"}
+
+                # Заполняем имя
+                if form_info["isTemplateForm"]:
+                    await page.fill('input[name="template[project][][name]"]', name)
+                else:
+                    await page.fill('#project_name, input[name="project[name]"]', name)
+
+                # Заполняем идентификатор
+                if form_info["hasIdent"]:
+                    if form_info["isTemplateForm"]:
+                        await page.fill('input[name="template[project][][identifier]"]', identifier)
+                    else:
+                        ident_field = page.locator('#project_identifier, input[name="project[identifier]"]')
+                        await ident_field.fill("")
+                        await ident_field.fill(identifier)
+
+                logger.info("playwright_filled", name=name, identifier=identifier)
+
+                # Нажимаем submit
+                if form_info["hasName"] and any("Создать" in l or "Create" in l for l in form_info["submitLabels"]):
+                    # EasyRedmine template form
+                    if form_info["isTemplateForm"]:
+                        # Заполняем через evaluate (надёжнее для template form)
+                        await page.evaluate("""({name, identifier}) => {
+                            const nameEl = document.querySelector('[name="template[project][][name]"]');
+                            if (nameEl) nameEl.value = name;
+                            const identEl = document.querySelector('[name="template[project][][identifier]"]');
+                            if (identEl) identEl.value = identifier;
+                        }""", {"name": name, "identifier": identifier})
+
+                    # Кликаем кнопку (не "Экспорт")
+                    submit_btn = page.locator('input[type="submit"]').first
+                    # Пробуем найти кнопку "Создать" или первую submit
+                    create_btns = page.locator('input[type="submit"]').filter(has_not_text="Экспорт")
+                    if await create_btns.count() > 0:
+                        submit_btn = create_btns.first
+                    await submit_btn.click()
+                else:
+                    # Стандартная форма — первый submit
+                    submit_btn = page.locator('input[type="submit"]').first
+                    await submit_btn.click()
+
+                # Ждём редиректа
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=15000)
+                except Exception:
+                    pass
+                await page.wait_for_timeout(5000)
+
+                final_url = page.url
+                logger.info("playwright_after_submit", url=final_url)
+
+                # Проверяем ошибки на странице
+                page_errors = await page.evaluate("""() => {
+                    const el = document.querySelector('#errorExplanation, .flash.error');
+                    return el ? el.textContent.trim().substring(0, 200) : null;
+                }""")
+                if page_errors:
+                    logger.warning("playwright_page_error", error=page_errors)
+
+                # Извлекаем проект из URL редиректа
+                import re as _re
+                proj_match = _re.search(r'/projects/([^/\?#]+)', final_url)
+                if proj_match and '/new' not in final_url and '/create' not in final_url and '/templates/' not in final_url:
+                    new_ident = proj_match.group(1)
+                    try:
+                        p_data = await self._api("GET", f"/projects/{new_ident}.json")
+                        new_project_id = p_data["project"]["id"]
+                        logger.info("playwright_project_created", id=new_project_id, ident=new_ident)
+                    except Exception as e:
+                        logger.warning("playwright_fetch_failed", ident=new_ident, error=str(e))
+
+                await browser.close()
+
+        except Exception as e:
+            logger.error("playwright_error", error=str(e))
+            return {"success": False, "error": f"Playwright: {str(e)[:200]}"}
+
+        if not new_project_id:
+            return {"success": False, "error": "Не удалось создать проект из шаблона — нет редиректа."}
+
+        # Обновляем имя (на случай если шаблон переименовал)
+        try:
+            await self._api("PUT", f"/projects/{new_project_id}.json", body={
+                "project": {"name": name, "identifier": identifier}
+            })
+        except Exception as e:
+            logger.warning("playwright_rename_failed", error=str(e)[:80])
+
+        return {
+            "success": True,
+            "id": new_project_id,
+            "identifier": new_ident,
+            "name": name,
+            "template": template_ident,
+            "template_id": tpl_id,
+            "parent_id": parent_id,
+            "url": f"{self.base_url}/projects/{new_ident}",
+        }
+
     # ═══════════════════════════════════════════════════════
     # TOOLS
     # ═══════════════════════════════════════════════════════
@@ -361,6 +590,15 @@ class RedmineSkill(BaseSkill):
                     "limit": {"type": "integer", "default": 50},
                 },
             }),
+            LLMTool("redmine.create_from_template",
+                "Создаёт проект из шаблона EasyRedmine через Playwright (browser automation). "
+                "Используй когда нужен именно шаблон, а не пустой проект.", {
+                "type": "object", "properties": {
+                    "template": {"type": "string", "description": "Идентификатор шаблона (напр. trade_v2)"},
+                    "name": {"type": "string", "description": "Название нового проекта"},
+                    "parent_id": {"type": "integer", "description": "ID родительского проекта"},
+                }, "required": ["template", "name"],
+            }),
         ]
 
     # ═══════════════════════════════════════════════════════
@@ -380,6 +618,7 @@ class RedmineSkill(BaseSkill):
                 "find_counterparty": self._find_counterparty,
                 "create_deal_project": self._create_deal_project,
                 "members": self._members, "me": self._me, "time_entries": self._time_entries,
+                "create_from_template": self._exec_create_from_template,
             }.get(action)
             if not handler:
                 return json.dumps({"error": f"Неизвестное действие: {action}"}, ensure_ascii=False)
@@ -596,6 +835,17 @@ class RedmineSkill(BaseSkill):
         total = sum(e["hours"] or 0 for e in entries)
         return json.dumps({"total_hours": round(total, 2), "entries": entries}, ensure_ascii=False)
 
+    async def _exec_create_from_template(self, p):
+        """Обёртка для вызова _create_from_template как инструмента."""
+        ident = p.get("identifier") or slugify_identifier(p["name"])
+        result = await self._create_from_template(
+            template_ident=p["template"],
+            name=p["name"],
+            identifier=ident,
+            parent_id=p.get("parent_id"),
+        )
+        return json.dumps(result, ensure_ascii=False)
+
     # ═══════════════════════════════════════════════════════
     # CREATE DEAL PROJECT (5 phases)
     # ═══════════════════════════════════════════════════════
@@ -673,17 +923,36 @@ class RedmineSkill(BaseSkill):
 
         log("Phase 0 done.\n")
 
-        # ── PHASE 1: Create project ──
-        log("[1/5] Creating project...")
+        # ── PHASE 1: Create project from template ──
+        log("[1/5] Creating project from template...")
         ident = slugify_identifier(p["name"])
-        try:
-            data = await self._api_safe("POST", "/projects.json", body={"project": {
-                "name": p["name"], "identifier": ident, "is_public": False, "parent_id": parent_id}})
-            pid = data["project"]["id"]
-            pident = data["project"]["identifier"]
-            log(f"  ✓ #{pid} ({pident})")
-        except Exception as e:
-            return json.dumps({"success": False, "error": "create_failed", "message": str(e)[:200]}, ensure_ascii=False)
+        template_ident = p.get("template", "trade_v2")
+
+        # Пробуем создать через Playwright (шаблон)
+        tpl_result = await self._create_from_template(
+            template_ident=template_ident,
+            name=p["name"],
+            identifier=ident,
+            parent_id=parent_id,
+        )
+
+        if tpl_result.get("success"):
+            pid = tpl_result["id"]
+            pident = tpl_result["identifier"]
+            log(f"  ✓ Template #{pid} ({pident})")
+        else:
+            # Fallback: прямое создание через API (без шаблона)
+            log(f"  ⚠ Template failed: {tpl_result.get('error', '?')[:80]}")
+            log("  Fallback: creating via API...")
+            try:
+                data = await self._api_safe("POST", "/projects.json", body={"project": {
+                    "name": p["name"], "identifier": ident, "is_public": False, "parent_id": parent_id}})
+                pid = data["project"]["id"]
+                pident = data["project"]["identifier"]
+                log(f"  ✓ API #{pid} ({pident})")
+            except Exception as e:
+                return json.dumps({"success": False, "error": "create_failed",
+                    "template_error": tpl_result.get("error"), "api_error": str(e)[:200]}, ensure_ascii=False)
 
         # ── PHASE 2: Roles ──
         log("[2/5] Roles...")
