@@ -98,24 +98,23 @@ class MaxChannel(BaseChannel):
         
         @self._dp.message_created()
         async def on_message(event: MessageCreated):
-            text = None
-            if event.message and event.message.body:
-                text = event.message.body.text if hasattr(event.message.body, "text") else str(event.message.body)
+            # maxapi structure:
+            # event.message.recipient.chat_id — ID чата
+            # event.message.sender.user_id — ID отправителя
+            # event.message.body.mid — ID сообщения
+            # event.message.body.text — текст
             
-            # mid — безопасно достаём ID сообщения
-            mid = str(uuid.uuid4())
-            if event.message:
-                mid = str(getattr(event.message, 'mid', None) or getattr(event.message, 'message_id', None) or mid)
-            
-            uid = "unknown"
-            if event.message and event.message.sender:
-                uid = str(event.message.sender.user_id)
+            m = event.message
+            text = m.body.text if m.body else None
+            mid = m.body.mid if m.body else str(uuid.uuid4())
+            chat_id = str(m.recipient.chat_id) if m.recipient else "0"
+            user_id = str(m.sender.user_id) if m.sender else "unknown"
             
             msg = Message(
                 id=mid,
                 channel=self.name,
-                user_id=uid,
-                chat_id=str(event.chat_id),
+                user_id=user_id,
+                chat_id=chat_id,
                 text=text,
                 role=MessageRole.USER,
             )
