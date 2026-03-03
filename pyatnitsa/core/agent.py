@@ -9,8 +9,9 @@ from typing import Any
 
 import structlog
 
-from pyatnitsa.core.models import Message, Response, Event, ToolCall
+from pyatnitsa.core.models import Message, Response, Event, ToolCall, Attachment
 from pyatnitsa.core.llm import LLMManager, LLMMessage, LLMTool
+from pyatnitsa.core.extractor import extract_text
 from pyatnitsa.skills.skills import SkillLoader
 from pyatnitsa.memory.store import MemoryStore
 from pyatnitsa.memory.conversations import ConversationStore
@@ -56,22 +57,30 @@ class Agent:
     """Главный агент Пятница.ai."""
 
     def __init__(self, llm: LLMManager, skills: SkillLoader,
-                 memory: MemoryStore, conversations: ConversationStore | None = None):
+                 memory: MemoryStore, conversations: ConversationStore | None = None,
+                 file_store=None):
         self.llm = llm
         self.skills = skills
         self.memory = memory
         self.conversations = conversations
+        self.file_store = file_store
 
     async def handle_message(self, message: Message) -> Response:
         user_id = message.user_id
         text = (message.text or "").strip()
         logger.info("agent_message_received", user_id=user_id,
-                     channel=message.channel, text=text[:100])
+                     channel=message.channel, text=text[:100],
+                     attachments=len(message.attachments))
 
         if text.startswith("/"):
             cmd_response = await self._handle_command(user_id, text, message.channel)
             if cmd_response:
                 return cmd_response
+
+        # Обработка вложений — извлечение текста для LLM
+        file_context = await self._process_attachments(message.attachments)
+        if file_context:
+            text = f"{text}\n\n{file_context}" if text else file_context
 
         if not self.conversations:
             return await self._handle_legacy(message)
@@ -105,6 +114,40 @@ class Agent:
             await conv.compact(chat.id, self._summarize_for_compaction)
 
         return Response(text=response_text)
+
+    async def _process_attachments(self, attachments: list):
+        if not attachments:
+            return None
+        parts = []
+        for att in attachments:
+            fname = att.filename or "file"
+            file_path = None
+            if self.file_store and hasattr(att, "url") and att.url:
+                url_parts = (att.url or "").split("/")
+                if len(url_parts) >= 4 and url_parts[1] == "api" and url_parts[2] == "files":
+                    meta = await self.file_store.get_file(url_parts[3])
+                    if meta:
+                        file_path = meta["stored_path"]
+            if not file_path and att.data:
+                import tempfile
+                ext = "." + fname.rsplit(".", 1)[-1] if "." in fname else ""
+                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=ext, dir="data/uploads")
+                tmp.write(att.data)
+                tmp.close()
+                file_path = tmp.name
+            if file_path:
+                extracted = await extract_text(file_path, att.mime_type)
+                if extracted:
+                    parts.append(f"[File: {fname}]\n{extracted}\n[/File]")
+                    if self.file_store and att.url:
+                        url_parts = (att.url or "").split("/")
+                        if len(url_parts) >= 4:
+                            await self.file_store.set_text_content(url_parts[3], extracted[:5000])
+                else:
+                    parts.append(f"[File: {fname} ({att.mime_type or '?'}) - no text]")
+            else:
+                parts.append(f"[File: {fname} ({att.mime_type or '?'})]")
+        return "\n\n".join(parts) if parts else None
 
     async def _handle_command(self, user_id, text, channel):
         cmd = text.split()[0].lower()

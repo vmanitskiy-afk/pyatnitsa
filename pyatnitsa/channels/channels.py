@@ -130,8 +130,28 @@ class MaxChannel(BaseChannel):
             await self._dp.stop_polling()
     
     async def send(self, chat_id: str, response: Response):
-        if self._bot and response.text:
+        if not self._bot:
+            return
+        if response.text:
             await self._bot.send_message(chat_id=int(chat_id), text=response.text)
+        for att in response.attachments:
+            try:
+                if att.data:
+                    from io import BytesIO
+                    buf = BytesIO(att.data)
+                    buf.name = att.filename or "file"
+                    await self._bot.send_file(chat_id=int(chat_id), file=buf)
+                elif att.url and att.url.startswith("/") and hasattr(self, '_file_store') and self._file_store:
+                    url_parts = att.url.split("/")
+                    if len(url_parts) >= 4:
+                        result = await self._file_store.get_file_data(url_parts[3])
+                        if result:
+                            from io import BytesIO
+                            buf = BytesIO(result[0])
+                            buf.name = result[2]
+                            await self._bot.send_file(chat_id=int(chat_id), file=buf)
+            except Exception as e:
+                logger.error("max_send_file_error", error=str(e))
 
 
 # ─── Telegram ────────────────────────────────────────────────
@@ -156,12 +176,27 @@ class TelegramChannel(BaseChannel):
         
         @self._dp.message()
         async def on_message(tg_message: types.Message):
+            from pyatnitsa.core.models import Attachment
+            attachments = []
+            tg_file = tg_message.document or (tg_message.photo[-1] if tg_message.photo else None)
+            if tg_file:
+                try:
+                    file_info = await self._bot.get_file(tg_file.file_id)
+                    result = await self._bot.download_file(file_info.file_path)
+                    data = result.read() if hasattr(result, "read") else result
+                    fname = getattr(tg_file, "file_name", None) or f"tg_{tg_file.file_id}"
+                    mime = getattr(tg_file, "mime_type", None)
+                    att_type = "image" if tg_message.photo else "file"
+                    attachments.append(Attachment(type=att_type, data=data, filename=fname, mime_type=mime))
+                except Exception as e:
+                    logger.warning("tg_download_error", error=str(e))
             msg = Message(
                 id=str(tg_message.message_id),
                 channel=self.name,
                 user_id=str(tg_message.from_user.id) if tg_message.from_user else "unknown",
                 chat_id=str(tg_message.chat.id),
-                text=tg_message.text or "",
+                text=tg_message.text or tg_message.caption or "",
+                attachments=attachments,
                 role=MessageRole.USER,
             )
             await self._dispatch(msg)
@@ -178,9 +213,40 @@ class TelegramChannel(BaseChannel):
             await self._bot.session.close()
     
     async def send(self, chat_id: str, response: Response):
-        if self._bot and response.text:
-            # Разбиваем длинные сообщения
+        if not self._bot:
+            return
+        if response.text:
             text = response.text
             while text:
                 chunk, text = text[:4096], text[4096:]
                 await self._bot.send_message(chat_id=int(chat_id), text=chunk)
+        # Отправка вложений
+        for att in response.attachments:
+            try:
+                from aiogram.types import FSInputFile, BufferedInputFile
+                if att.data:
+                    f = BufferedInputFile(att.data, filename=att.filename or "file")
+                elif att.url and att.url.startswith("/"):
+                    # Локальный файл через file_store
+                    from pathlib import Path
+                    path = Path(att.url.lstrip("/"))
+                    if not path.exists() and hasattr(self, '_file_store') and self._file_store:
+                        url_parts = att.url.split("/")
+                        if len(url_parts) >= 4:
+                            result = await self._file_store.get_file_data(url_parts[3])
+                            if result:
+                                f = BufferedInputFile(result[0], filename=result[2])
+                            else:
+                                continue
+                    elif path.exists():
+                        f = FSInputFile(str(path), filename=att.filename)
+                    else:
+                        continue
+                else:
+                    continue
+                if att.type == "image" or (att.mime_type or "").startswith("image/"):
+                    await self._bot.send_photo(chat_id=int(chat_id), photo=f)
+                else:
+                    await self._bot.send_document(chat_id=int(chat_id), document=f)
+            except Exception as e:
+                logger.error("tg_send_file_error", error=str(e))

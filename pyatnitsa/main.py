@@ -131,7 +131,7 @@ async def run():
     await skills.load_all()
 
     # ─── Agent ───────────────────────────────────────────────
-    agent = Agent(llm=llm, skills=skills, memory=memory, conversations=conversation_store) if llm.providers else None
+    agent = Agent(llm=llm, skills=skills, memory=memory, conversations=conversation_store, file_store=file_store) if llm.providers else None
 
     # ─── Heartbeat ───────────────────────────────────────────
     heartbeat = Heartbeat(interval_minutes=settings.scheduler.heartbeat_interval_minutes)

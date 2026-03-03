@@ -149,10 +149,16 @@ async def websocket_chat(ws: WebSocket):
 
                 response = await _agent.handle_message(msg)
 
-                await ws.send_text(json.dumps({
+                ws_data = {
                     "type": "message",
                     "text": response.text or "",
-                }))
+                }
+                if response.attachments:
+                    ws_data["attachments"] = [
+                        {"url": a.url, "name": a.filename, "mime_type": a.mime_type, "type": a.type}
+                        for a in response.attachments
+                    ]
+                await ws.send_text(json.dumps(ws_data))
             except Exception as e:
                 logger.error("ws_chat_error", error=str(e))
                 await ws.send_text(json.dumps({

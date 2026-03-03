@@ -777,7 +777,15 @@ function connectWS() {
         document.getElementById('chatTitle').textContent = data.chat_title;
       }
     } else if (data.type === 'message') {
-      addMsg('assistant', data.text);
+      var mc = data.text || '';
+      if (data.attachments && data.attachments.length > 0) {
+        mc += data.attachments.map(function(a) {
+          if (a.mime_type && a.mime_type.startsWith('image/'))
+            return '<img class="msg-image" src="' + a.url + '" onclick="window.open(this.src)">';
+          return '<a class="msg-file" href="' + a.url + '" target="_blank">' + (a.name||'file') + '</a>';
+        }).join('');
+      }
+      addMsg('assistant', mc);
     } else if (data.type === 'error') {
       addMsg('error', data.text);
     } else if (data.type === 'typing') {
