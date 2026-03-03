@@ -661,6 +661,7 @@ function connectWS() {
     connected = true;
     document.getElementById('sendBtn').disabled = false;
     setStatus('ok', 'Подключено');
+    document.querySelectorAll('#messages .msg.system').forEach(function(el) { el.remove(); });
     addMsg('system', 'Подключено к Пятнице');
     fetchStatus();
   };
