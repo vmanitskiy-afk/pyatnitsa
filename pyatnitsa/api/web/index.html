@@ -54,6 +54,7 @@ body {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  position: relative;
 }
 
 /* ─── Sidebar ────────────────────────────────────────── */
@@ -122,11 +123,20 @@ body {
   color: var(--text2);
 }
 
-/* ─── Chat Panel ─────────────────────────────────────── */
+/* ─── Panels — hide/show ─────────────────────────────── */
 
-.chat-panel { display: flex; flex-direction: column; height: 100%; }
-.settings-panel { display: none; height: 100%; overflow-y: auto; }
-.panel-active { display: flex !important; }
+.panel {
+  display: none;
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+}
+
+.panel.active {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ─── Chat Panel ─────────────────────────────────────── */
 
 .chat-header {
   padding: 16px 24px;
@@ -136,6 +146,7 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
 }
 
 .messages {
@@ -158,6 +169,7 @@ body {
   font-size: 14px;
   line-height: 1.55;
   animation: msgIn 0.2s ease-out;
+  word-wrap: break-word;
 }
 
 @keyframes msgIn {
@@ -220,6 +232,7 @@ body {
   padding: 16px 24px;
   border-top: 1px solid var(--border);
   background: var(--surface);
+  flex-shrink: 0;
 }
 
 .chat-input-wrap {
@@ -245,7 +258,6 @@ body {
 }
 
 .chat-input:focus { border-color: var(--accent); }
-
 .chat-input::placeholder { color: var(--text2); }
 
 .send-btn {
@@ -268,18 +280,22 @@ body {
 
 /* ─── Settings Panel ─────────────────────────────────── */
 
-.settings-panel {
-  flex-direction: column;
-  padding: 24px;
-  gap: 24px;
+.settings-scroll {
+  flex: 1;
   overflow-y: auto;
+  padding: 24px;
 }
+
+.settings-scroll::-webkit-scrollbar { width: 6px; }
+.settings-scroll::-webkit-scrollbar-track { background: transparent; }
+.settings-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 
 .settings-section {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   overflow: hidden;
+  margin-bottom: 16px;
 }
 
 .settings-section-header {
@@ -291,9 +307,38 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s;
 }
 
-.settings-section-body { padding: 16px 18px; }
+.settings-section-header:hover {
+  background: #252535;
+}
+
+.settings-section-header .chevron {
+  margin-left: auto;
+  transition: transform 0.2s;
+  width: 16px;
+  height: 16px;
+  color: var(--text2);
+}
+
+.settings-section.open .chevron {
+  transform: rotate(180deg);
+}
+
+.settings-section-body {
+  padding: 0;
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.3s ease, padding 0.3s ease;
+}
+
+.settings-section.open .settings-section-body {
+  padding: 16px 18px;
+  max-height: 600px;
+}
 
 .field {
   margin-bottom: 14px;
@@ -333,12 +378,13 @@ body {
 }
 
 .save-bar {
-  position: sticky;
-  bottom: 0;
-  padding: 16px 0;
+  padding: 16px 24px;
   display: flex;
   gap: 12px;
   justify-content: flex-end;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
 }
 
 .btn {
@@ -383,6 +429,7 @@ body {
   z-index: 100;
 }
 
+.toast.error { background: var(--red); color: #fff; }
 .toast.show { transform: translateY(0); opacity: 1; }
 
 /* ─── Responsive ─────────────────────────────────────── */
@@ -421,8 +468,9 @@ body {
 
   <!-- Main -->
   <main class="main">
-    <!-- Chat -->
-    <div class="chat-panel panel-active" id="chatPanel">
+
+    <!-- Chat Panel -->
+    <div class="panel active" id="chatPanel">
       <div class="chat-header">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent2)" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
         Пятница
@@ -440,112 +488,125 @@ body {
       </div>
     </div>
 
-    <!-- Settings -->
-    <div class="settings-panel" id="settingsPanel">
-      <div class="settings-section">
-        <div class="settings-section-header">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent2)" stroke-width="2"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 002 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0022 16z"/></svg>
-          LLM — Языковая модель
-        </div>
-        <div class="settings-section-body">
-          <div class="field">
-            <label>llm.gigachat_credentials</label>
-            <input type="password" data-key="llm.gigachat_credentials" placeholder="base64(client_id:client_secret)">
-            <div class="hint">Получить: developers.sber.ru/studio → Проект → Client ID + Secret → base64</div>
-          </div>
-          <div class="field">
-            <label>llm.gigachat_model</label>
-            <select data-key="llm.gigachat_model">
-              <option value="GigaChat-2-Max">GigaChat-2-Max (топ)</option>
-              <option value="GigaChat-2-Pro">GigaChat-2-Pro (средний)</option>
-              <option value="GigaChat-2">GigaChat-2 (бесплатный)</option>
-            </select>
-          </div>
-          <div class="field">
-            <label>llm.gigachat_scope</label>
-            <select data-key="llm.gigachat_scope">
-              <option value="GIGACHAT_API_PERS">GIGACHAT_API_PERS (физлицо)</option>
-              <option value="GIGACHAT_API_B2B">GIGACHAT_API_B2B (бизнес)</option>
-              <option value="GIGACHAT_API_CORP">GIGACHAT_API_CORP (корпоративный)</option>
-            </select>
-          </div>
-          <div class="field">
-            <label>llm.claude_api_key</label>
-            <input type="password" data-key="llm.claude_api_key" placeholder="sk-ant-... (опционально, fallback)">
-          </div>
-        </div>
-      </div>
+    <!-- Settings Panel -->
+    <div class="panel" id="settingsPanel">
+      <div class="settings-scroll">
 
-      <div class="settings-section">
-        <div class="settings-section-header">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent2)" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
-          Каналы связи
-        </div>
-        <div class="settings-section-body">
-          <div class="field">
-            <label>channels.max_bot_token</label>
-            <input type="password" data-key="channels.max_bot_token" placeholder="Токен от @MasterBot">
-            <div class="hint">В MAX мессенджере: @MasterBot → Создать бота → Скопировать токен</div>
+        <!-- LLM -->
+        <div class="settings-section open" id="sectionLLM">
+          <div class="settings-section-header" onclick="toggleSection('sectionLLM')">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent2)" stroke-width="2"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 002 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0022 16z"/></svg>
+            LLM — Языковая модель
+            <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
           </div>
-          <div class="field">
-            <label>channels.telegram_bot_token</label>
-            <input type="password" data-key="channels.telegram_bot_token" placeholder="Опционально">
+          <div class="settings-section-body">
+            <div class="field">
+              <label>llm.gigachat_credentials</label>
+              <input type="password" data-key="llm.gigachat_credentials" placeholder="base64(client_id:client_secret)">
+              <div class="hint">developers.sber.ru/studio → Проект → Client ID + Secret → base64</div>
+            </div>
+            <div class="field">
+              <label>llm.gigachat_model</label>
+              <select data-key="llm.gigachat_model">
+                <option value="GigaChat-2-Max">GigaChat-2-Max (топ)</option>
+                <option value="GigaChat-2-Pro">GigaChat-2-Pro (средний)</option>
+                <option value="GigaChat-2">GigaChat-2 (бесплатный)</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>llm.gigachat_scope</label>
+              <select data-key="llm.gigachat_scope">
+                <option value="GIGACHAT_API_PERS">GIGACHAT_API_PERS (физлицо)</option>
+                <option value="GIGACHAT_API_B2B">GIGACHAT_API_B2B (бизнес)</option>
+                <option value="GIGACHAT_API_CORP">GIGACHAT_API_CORP (корпоративный)</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>llm.claude_api_key</label>
+              <input type="password" data-key="llm.claude_api_key" placeholder="sk-ant-... (опционально, fallback)">
+            </div>
           </div>
         </div>
-      </div>
 
-      <div class="settings-section">
-        <div class="settings-section-header">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent2)" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
-          Интеграции
+        <!-- Channels -->
+        <div class="settings-section" id="sectionChannels">
+          <div class="settings-section-header" onclick="toggleSection('sectionChannels')">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent2)" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+            Каналы связи
+            <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+          </div>
+          <div class="settings-section-body">
+            <div class="field">
+              <label>channels.max_bot_token</label>
+              <input type="password" data-key="channels.max_bot_token" placeholder="Токен от @MasterBot">
+              <div class="hint">В MAX мессенджере: @MasterBot → Создать бота → Скопировать токен</div>
+            </div>
+            <div class="field">
+              <label>channels.telegram_bot_token</label>
+              <input type="password" data-key="channels.telegram_bot_token" placeholder="Опционально">
+            </div>
+          </div>
         </div>
-        <div class="settings-section-body">
-          <div class="field">
-            <label>integrations.redmine_url</label>
-            <input type="text" data-key="integrations.redmine_url" placeholder="https://redmine.example.com">
-          </div>
-          <div class="field">
-            <label>integrations.redmine_api_key</label>
-            <input type="password" data-key="integrations.redmine_api_key" placeholder="API ключ Redmine">
-          </div>
-          <div class="field">
-            <label>integrations.bitrix_webhook_url</label>
-            <input type="text" data-key="integrations.bitrix_webhook_url" placeholder="https://company.bitrix24.ru/rest/1/xxx/">
-          </div>
-        </div>
-      </div>
 
-      <div class="settings-section">
-        <div class="settings-section-header">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent2)" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
-          Система
-        </div>
-        <div class="settings-section-body">
-          <div class="field">
-            <label>system.agent_name</label>
-            <input type="text" data-key="system.agent_name" placeholder="Пятница">
+        <!-- Integrations -->
+        <div class="settings-section" id="sectionIntegrations">
+          <div class="settings-section-header" onclick="toggleSection('sectionIntegrations')">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent2)" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
+            Интеграции
+            <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
           </div>
-          <div class="field">
-            <label>system.log_level</label>
-            <select data-key="system.log_level">
-              <option value="DEBUG">DEBUG</option>
-              <option value="INFO">INFO</option>
-              <option value="WARNING">WARNING</option>
-            </select>
-          </div>
-          <div class="field">
-            <label>system.heartbeat_interval</label>
-            <input type="number" data-key="system.heartbeat_interval" placeholder="5">
-            <div class="hint">Интервал проактивных проверок (минуты)</div>
+          <div class="settings-section-body">
+            <div class="field">
+              <label>integrations.redmine_url</label>
+              <input type="text" data-key="integrations.redmine_url" placeholder="https://redmine.example.com">
+            </div>
+            <div class="field">
+              <label>integrations.redmine_api_key</label>
+              <input type="password" data-key="integrations.redmine_api_key" placeholder="API ключ Redmine">
+            </div>
+            <div class="field">
+              <label>integrations.bitrix_webhook_url</label>
+              <input type="text" data-key="integrations.bitrix_webhook_url" placeholder="https://company.bitrix24.ru/rest/1/xxx/">
+            </div>
           </div>
         </div>
+
+        <!-- System -->
+        <div class="settings-section" id="sectionSystem">
+          <div class="settings-section-header" onclick="toggleSection('sectionSystem')">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent2)" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+            Система
+            <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+          </div>
+          <div class="settings-section-body">
+            <div class="field">
+              <label>system.agent_name</label>
+              <input type="text" data-key="system.agent_name" placeholder="Пятница">
+            </div>
+            <div class="field">
+              <label>system.log_level</label>
+              <select data-key="system.log_level">
+                <option value="DEBUG">DEBUG</option>
+                <option value="INFO">INFO</option>
+                <option value="WARNING">WARNING</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>system.heartbeat_interval</label>
+              <input type="number" data-key="system.heartbeat_interval" placeholder="5">
+              <div class="hint">Интервал проактивных проверок (минуты)</div>
+            </div>
+          </div>
+        </div>
+
       </div>
 
       <div class="save-bar">
-        <button class="btn btn-ghost" onclick="loadSettings()">Отменить</button>
+        <button class="btn btn-ghost" onclick="cancelSettings()">Отменить</button>
         <button class="btn btn-primary" onclick="saveSettings()">Сохранить</button>
       </div>
     </div>
+
   </main>
 </div>
 
@@ -558,36 +619,39 @@ let connected = false;
 
 // ─── Panel switching ────────────────────────────────────────
 function switchPanel(name) {
-  document.querySelectorAll('.nav-item').forEach(el => {
+  document.querySelectorAll('.nav-item').forEach(function(el) {
     el.classList.toggle('active', el.dataset.panel === name);
   });
-  document.getElementById('chatPanel').classList.toggle('panel-active', name === 'chat');
-  document.getElementById('settingsPanel').classList.toggle('panel-active', name === 'settings');
+  document.getElementById('chatPanel').classList.toggle('active', name === 'chat');
+  document.getElementById('settingsPanel').classList.toggle('active', name === 'settings');
   if (name === 'settings') loadSettings();
 }
 
+// ─── Section toggle ─────────────────────────────────────────
+function toggleSection(id) {
+  document.getElementById(id).classList.toggle('open');
+}
+
 // ─── Toast ──────────────────────────────────────────────────
-function toast(msg) {
-  const el = document.getElementById('toast');
+function toast(msg, isError) {
+  var el = document.getElementById('toast');
   el.textContent = msg;
-  el.classList.add('show');
-  setTimeout(() => el.classList.remove('show'), 2000);
+  el.className = 'toast' + (isError ? ' error' : '') + ' show';
+  setTimeout(function() { el.classList.remove('show'); }, 2500);
 }
 
 // ─── Status ─────────────────────────────────────────────────
 function setStatus(state, text) {
-  const dot = document.getElementById('statusDot');
-  const txt = document.getElementById('statusText');
-  dot.className = 'status-dot ' + state;
-  txt.textContent = text;
+  document.getElementById('statusDot').className = 'status-dot ' + state;
+  document.getElementById('statusText').textContent = text;
 }
 
 // ─── WebSocket Chat ─────────────────────────────────────────
 function connectWS() {
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  ws = new WebSocket(`${proto}//${location.host}/ws/chat`);
+  var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(proto + '//' + location.host + '/ws/chat');
 
-  ws.onopen = () => {
+  ws.onopen = function() {
     connected = true;
     document.getElementById('sendBtn').disabled = false;
     setStatus('ok', 'Подключено');
@@ -595,8 +659,8 @@ function connectWS() {
     fetchStatus();
   };
 
-  ws.onmessage = (e) => {
-    const data = JSON.parse(e.data);
+  ws.onmessage = function(e) {
+    var data = JSON.parse(e.data);
     removeTyping();
     if (data.type === 'message') {
       addMsg('assistant', data.text);
@@ -607,25 +671,25 @@ function connectWS() {
     }
   };
 
-  ws.onclose = () => {
+  ws.onclose = function() {
     connected = false;
     document.getElementById('sendBtn').disabled = true;
     setStatus('err', 'Отключено');
     setTimeout(connectWS, 3000);
   };
 
-  ws.onerror = () => {
+  ws.onerror = function() {
     setStatus('err', 'Ошибка связи');
   };
 }
 
 function sendMessage() {
-  const input = document.getElementById('chatInput');
-  const text = input.value.trim();
+  var input = document.getElementById('chatInput');
+  var text = input.value.trim();
   if (!text || !connected) return;
 
   addMsg('user', text);
-  ws.send(JSON.stringify({ text }));
+  ws.send(JSON.stringify({ text: text }));
   input.value = '';
   input.style.height = 'auto';
 }
@@ -639,13 +703,12 @@ function handleKey(e) {
 
 // ─── Messages ───────────────────────────────────────────────
 function addMsg(role, text) {
-  const container = document.getElementById('messages');
-  // Remove initial system message
-  const initial = container.querySelector('.msg.system');
+  var container = document.getElementById('messages');
+  var initial = container.querySelector('.msg.system');
   if (initial && initial.textContent === 'Подключение к серверу...') initial.remove();
 
-  const div = document.createElement('div');
-  div.className = `msg ${role}`;
+  var div = document.createElement('div');
+  div.className = 'msg ' + role;
   div.innerHTML = formatText(text);
   container.appendChild(div);
   container.scrollTop = container.scrollHeight;
@@ -653,8 +716,8 @@ function addMsg(role, text) {
 
 function showTyping() {
   removeTyping();
-  const container = document.getElementById('messages');
-  const div = document.createElement('div');
+  var container = document.getElementById('messages');
+  var div = document.createElement('div');
   div.className = 'typing';
   div.id = 'typingIndicator';
   div.innerHTML = '<span>Пятница думает...</span>';
@@ -663,12 +726,12 @@ function showTyping() {
 }
 
 function removeTyping() {
-  const el = document.getElementById('typingIndicator');
+  var el = document.getElementById('typingIndicator');
   if (el) el.remove();
 }
 
 function formatText(text) {
-  // Basic markdown: code blocks, bold, links
+  if (!text) return '';
   text = text.replace(/```(\w*)\n?([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
   text = text.replace(/`([^`]+)`/g, '<code style="background:var(--bg);padding:2px 6px;border-radius:4px;font-family:var(--mono);font-size:13px">$1</code>');
   text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
@@ -676,60 +739,68 @@ function formatText(text) {
   return text;
 }
 
-// ─── Auto-resize textarea ───────────────────────────────────
+// Auto-resize textarea
 document.getElementById('chatInput').addEventListener('input', function() {
   this.style.height = 'auto';
   this.style.height = Math.min(this.scrollHeight, 160) + 'px';
 });
 
 // ─── Settings ───────────────────────────────────────────────
-async function loadSettings() {
-  try {
-    const res = await fetch('/api/settings');
-    const data = await res.json();
-    document.querySelectorAll('[data-key]').forEach(el => {
-      const key = el.dataset.key;
-      if (data[key] !== undefined) {
-        el.value = data[key];
-      }
+function loadSettings() {
+  fetch('/api/settings')
+    .then(function(res) { return res.json(); })
+    .then(function(data) {
+      document.querySelectorAll('[data-key]').forEach(function(el) {
+        var key = el.dataset.key;
+        if (data[key] !== undefined) {
+          el.value = data[key];
+        }
+      });
+    })
+    .catch(function(e) {
+      toast('Ошибка загрузки настроек', true);
     });
-  } catch (e) {
-    toast('Ошибка загрузки настроек');
-  }
 }
 
-async function saveSettings() {
-  const settings = {};
-  document.querySelectorAll('[data-key]').forEach(el => {
+function saveSettings() {
+  var settings = {};
+  document.querySelectorAll('[data-key]').forEach(function(el) {
     settings[el.dataset.key] = el.value;
   });
 
-  try {
-    const res = await fetch('/api/settings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ settings }),
+  fetch('/api/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ settings: settings }),
+  })
+    .then(function(res) { return res.json(); })
+    .then(function(data) {
+      toast('Настройки сохранены! Перезапустите сервер для применения.');
+    })
+    .catch(function(e) {
+      toast('Ошибка сохранения', true);
     });
-    const data = await res.json();
-    toast('Настройки сохранены');
-  } catch (e) {
-    toast('Ошибка сохранения');
-  }
+}
+
+function cancelSettings() {
+  loadSettings();
+  toast('Настройки сброшены');
 }
 
 // ─── System status ──────────────────────────────────────────
-async function fetchStatus() {
-  try {
-    const res = await fetch('/api/status');
-    const data = await res.json();
-    const providers = data.llm_providers || [];
-    const skills = data.skills || [];
-    if (providers.length) {
-      setStatus('ok', `LLM: ${providers.join(', ')} | Skills: ${skills.length}`);
-    } else {
-      setStatus('warn', 'LLM не подключена');
-    }
-  } catch (e) {}
+function fetchStatus() {
+  fetch('/api/status')
+    .then(function(res) { return res.json(); })
+    .then(function(data) {
+      var providers = data.llm_providers || [];
+      var skills = data.skills || [];
+      if (providers.length) {
+        setStatus('ok', 'LLM: ' + providers.join(', ') + ' | Skills: ' + skills.length);
+      } else {
+        setStatus('warn', 'LLM не подключена — откройте Настройки');
+      }
+    })
+    .catch(function() {});
 }
 
 // ─── Init ───────────────────────────────────────────────────
