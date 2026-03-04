@@ -195,10 +195,20 @@ class GigaChatProvider(LLMProvider):
                                     logger.warning("pillow_not_installed", hint="pip install Pillow")
                                 except Exception as conv_err:
                                     logger.warning("image_convert_err", error=str(conv_err)[:100])
-                                uploaded = await asyncio.get_event_loop().run_in_executor(
-                                    None, self.client.upload_file,
-                                    (f"image.jpg", img_data, mime)
-                                )
+                                uploaded = None
+                                for _upl_attempt in range(3):
+                                    try:
+                                        if _upl_attempt > 0:
+                                            await asyncio.sleep(2 ** _upl_attempt)
+                                        uploaded = await asyncio.get_event_loop().run_in_executor(
+                                            None, self.client.upload_file,
+                                            (f"image.jpg", img_data, mime)
+                                        )
+                                        break
+                                    except Exception as ue:
+                                        if "429" in str(ue) and _upl_attempt < 2:
+                                            continue
+                                        raise
                                 image_ids.append(uploaded.id_)
                                 logger.info("gigachat_image_uploaded", file_id=uploaded.id_)
                             except Exception as e:
@@ -239,9 +249,27 @@ class GigaChatProvider(LLMProvider):
             max_tokens=self.max_tokens,
         )
         
-        # GigaChat SDK синхронный — оборачиваем в asyncio
+        # Пауза после загрузки картинок чтобы не словить 429
+        if any(getattr(m, 'attachments', None) for m in gc_messages):
+            await asyncio.sleep(1)
+        
+        # GigaChat SDK синхронный — оборачиваем в asyncio с retry для 429
         loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(None, self.client.chat, chat)
+        last_err = None
+        for attempt in range(3):
+            try:
+                if attempt > 0:
+                    await asyncio.sleep(2 ** attempt)  # 2s, 4s
+                    logger.info("gigachat_retry", attempt=attempt + 1)
+                response = await loop.run_in_executor(None, self.client.chat, chat)
+                break
+            except Exception as e:
+                last_err = e
+                if "429" in str(e):
+                    continue
+                raise
+        else:
+            raise last_err
         
         # Парсим ответ
         choice = response.choices[0]
