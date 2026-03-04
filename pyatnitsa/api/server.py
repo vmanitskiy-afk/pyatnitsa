@@ -336,3 +336,12 @@ async def web_ui():
     if html_path.exists():
         return HTMLResponse(html_path.read_text(encoding="utf-8"))
     return HTMLResponse("<h1>Пятница.ai</h1><p>Web UI not found</p>")
+
+
+@app.get("/admin", response_class=HTMLResponse)
+@app.get("/admin/", response_class=HTMLResponse)
+async def admin_ui():
+    html_path = Path(__file__).parent / "admin_web" / "index.html"
+    if html_path.exists():
+        return HTMLResponse(html_path.read_text(encoding="utf-8"))
+    return HTMLResponse("<h1>Пятница.ai Admin</h1><p>Admin UI not found</p>")

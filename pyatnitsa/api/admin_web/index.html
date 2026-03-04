@@ -1,0 +1,721 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Пятница.ai — Админ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Onest:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0c0e11;
+  --bg-card: #14171c;
+  --bg-card-hover: #1a1e24;
+  --bg-input: #1a1e24;
+  --border: #2a2f38;
+  --border-light: #353b46;
+  --text: #e2e4e9;
+  --text-dim: #8b919d;
+  --text-muted: #5a6070;
+  --accent: #3b82f6;
+  --accent-dim: #2563eb;
+  --green: #22c55e;
+  --green-dim: #16a34a;
+  --red: #ef4444;
+  --red-dim: #dc2626;
+  --yellow: #eab308;
+  --orange: #f97316;
+  --purple: #a855f7;
+  --radius: 8px;
+  --sidebar-w: 220px;
+  --font: 'Onest', sans-serif;
+  --mono: 'JetBrains Mono', monospace;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  display: flex;
+}
+
+/* ─── Sidebar ───────────────────────────────── */
+.sidebar {
+  width: var(--sidebar-w);
+  background: var(--bg-card);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  top: 0; left: 0; bottom: 0;
+  z-index: 10;
+}
+
+.sidebar-logo {
+  padding: 20px 16px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: -0.3px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sidebar-logo span { color: var(--accent); }
+
+.sidebar-nav { flex: 1; padding: 8px; }
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--text-dim);
+  transition: all .15s;
+  user-select: none;
+}
+
+.nav-item:hover { background: var(--bg-card-hover); color: var(--text); }
+.nav-item.active { background: var(--accent-dim); color: #fff; }
+.nav-item svg { width: 18px; height: 18px; flex-shrink: 0; }
+
+.sidebar-footer {
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* ─── Main ──────────────────────────────────── */
+.main {
+  margin-left: var(--sidebar-w);
+  flex: 1;
+  padding: 24px 32px;
+  min-height: 100vh;
+}
+
+.page { display: none; }
+.page.active { display: block; animation: fadeIn .2s; }
+
+@keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+.page-title {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  margin-bottom: 20px;
+}
+
+/* ─── Cards / Grid ──────────────────────────── */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.stat-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+
+.stat-label { font-size: 12px; color: var(--text-dim); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+.stat-value { font-size: 28px; font-weight: 700; font-family: var(--mono); letter-spacing: -1px; }
+.stat-value.green { color: var(--green); }
+.stat-value.red { color: var(--red); }
+.stat-value.blue { color: var(--accent); }
+.stat-value.yellow { color: var(--yellow); }
+
+/* ─── Tables ────────────────────────────────── */
+.table-wrap {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 20px;
+}
+
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; padding: 10px 14px; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); background: var(--bg-card); border-bottom: 1px solid var(--border); }
+td { padding: 10px 14px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: var(--bg-card-hover); }
+
+/* ─── Buttons ───────────────────────────────── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-card);
+  color: var(--text);
+  font-size: 12.5px;
+  font-family: var(--font);
+  font-weight: 500;
+  cursor: pointer;
+  transition: all .15s;
+}
+
+.btn:hover { background: var(--bg-card-hover); border-color: var(--border-light); }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn-primary:hover { background: var(--accent-dim); }
+.btn-danger { background: var(--red); border-color: var(--red); color: #fff; }
+.btn-danger:hover { background: var(--red-dim); }
+.btn-sm { padding: 4px 10px; font-size: 11.5px; }
+
+/* ─── Toggle ────────────────────────────────── */
+.toggle { position: relative; width: 40px; height: 22px; cursor: pointer; }
+.toggle input { display: none; }
+.toggle-track {
+  position: absolute; inset: 0;
+  background: var(--border);
+  border-radius: 11px;
+  transition: background .2s;
+}
+.toggle input:checked + .toggle-track { background: var(--green); }
+.toggle-thumb {
+  position: absolute; top: 2px; left: 2px;
+  width: 18px; height: 18px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform .2s;
+  pointer-events: none;
+}
+.toggle input:checked ~ .toggle-thumb { transform: translateX(18px); }
+
+/* ─── Inputs ────────────────────────────────── */
+input[type=text], input[type=password], input[type=number], select, textarea {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 13px;
+  width: 100%;
+  outline: none;
+  transition: border .15s;
+}
+
+input:focus, textarea:focus, select:focus { border-color: var(--accent); }
+
+.form-group { margin-bottom: 14px; }
+.form-label { display: block; font-size: 12px; font-weight: 600; color: var(--text-dim); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.3px; }
+
+/* ─── Badge ─────────────────────────────────── */
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.badge-green { background: #16a34a33; color: var(--green); }
+.badge-red { background: #dc262633; color: var(--red); }
+.badge-blue { background: #2563eb33; color: var(--accent); }
+.badge-yellow { background: #eab30833; color: var(--yellow); }
+.badge-gray { background: #5a607033; color: var(--text-dim); }
+
+/* ─── Log viewer ────────────────────────────── */
+.log-entry {
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  display: flex;
+  gap: 12px;
+}
+.log-entry:hover { background: var(--bg-card-hover); }
+.log-ts { color: var(--text-muted); flex-shrink: 0; width: 140px; }
+.log-type { flex-shrink: 0; width: 80px; font-weight: 600; }
+.log-type.message { color: var(--accent); }
+.log-type.llm_call { color: var(--green); }
+.log-type.skill_call { color: var(--purple); }
+.log-type.llm_error { color: var(--red); }
+.log-type.error { color: var(--red); }
+.log-meta { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ─── Login overlay ─────────────────────────── */
+.login-overlay {
+  position: fixed; inset: 0;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.login-box {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 32px;
+  width: 360px;
+  text-align: center;
+}
+
+.login-box h2 { margin-bottom: 6px; }
+.login-box p { color: var(--text-dim); font-size: 13px; margin-bottom: 20px; }
+.login-error { color: var(--red); font-size: 12px; margin-top: 8px; display: none; }
+
+/* ─── Chart ─────────────────────────────────── */
+.chart-bar-wrap { display: flex; align-items: flex-end; gap: 4px; height: 120px; padding-top: 10px; }
+.chart-bar {
+  flex: 1;
+  background: var(--accent);
+  border-radius: 3px 3px 0 0;
+  min-height: 2px;
+  position: relative;
+  transition: height .3s;
+}
+.chart-bar:hover { opacity: .8; }
+.chart-bar-label {
+  position: absolute;
+  bottom: -18px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 9px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.chart-bar-value {
+  position: absolute;
+  top: -16px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 10px;
+  font-family: var(--mono);
+  color: var(--text-dim);
+}
+
+/* ─── Responsive ────────────────────────────── */
+.section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.section-title { font-size: 15px; font-weight: 600; }
+.empty-state { text-align: center; padding: 40px; color: var(--text-muted); font-size: 13px; }
+.mb-20 { margin-bottom: 20px; }
+</style>
+</head>
+<body>
+
+<!-- Login overlay -->
+<div class="login-overlay" id="loginOverlay">
+  <div class="login-box">
+    <h2>🤖 Пятница.ai</h2>
+    <p>Вход в панель управления</p>
+    <div class="form-group">
+      <input type="password" id="loginPassword" placeholder="Пароль администратора" onkeydown="if(event.key==='Enter')doLogin()">
+    </div>
+    <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="doLogin()">Войти</button>
+    <div class="login-error" id="loginError">Неверный пароль</div>
+  </div>
+</div>
+
+<!-- Sidebar -->
+<div class="sidebar">
+  <div class="sidebar-logo">🤖 <span>Пятница</span>.ai</div>
+  <nav class="sidebar-nav">
+    <div class="nav-item active" data-page="dashboard">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+      Dashboard
+    </div>
+    <div class="nav-item" data-page="skills">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+      Скиллы
+    </div>
+    <div class="nav-item" data-page="users">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+      Пользователи
+    </div>
+    <div class="nav-item" data-page="llm">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 6v6m11-7h-6m-6 0H1m18.07-6.07l-4.24 4.24m-5.66 0L4.93 4.93m14.14 14.14l-4.24-4.24m-5.66 0L4.93 19.07"/></svg>
+      LLM
+    </div>
+    <div class="nav-item" data-page="logs">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+      Логи
+    </div>
+    <div class="nav-item" data-page="conversations">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      Диалоги
+    </div>
+  </nav>
+  <div class="sidebar-footer">
+    Пятница.ai v0.2<br>
+    <a href="/" style="color:var(--accent);text-decoration:none;font-size:12px">← Открыть чат</a>
+  </div>
+</div>
+
+<!-- Main content -->
+<div class="main">
+
+  <!-- ═══ Dashboard ═══ -->
+  <div class="page active" id="page-dashboard">
+    <div class="page-title">Dashboard</div>
+    <div class="stat-grid" id="statsGrid">
+      <div class="stat-card"><div class="stat-label">Сообщений (24ч)</div><div class="stat-value blue" id="st-messages">—</div></div>
+      <div class="stat-card"><div class="stat-label">Пользователей</div><div class="stat-value green" id="st-users">—</div></div>
+      <div class="stat-card"><div class="stat-label">Ошибки LLM</div><div class="stat-value red" id="st-errors">—</div></div>
+      <div class="stat-card"><div class="stat-label">Ср. ответ (мс)</div><div class="stat-value yellow" id="st-latency">—</div></div>
+      <div class="stat-card"><div class="stat-label">Токены (24ч)</div><div class="stat-value" id="st-tokens">—</div></div>
+    </div>
+    <div class="section-header">
+      <div class="section-title">Сообщения по дням</div>
+    </div>
+    <div class="table-wrap" style="padding:16px 14px 28px">
+      <div class="chart-bar-wrap" id="chartDays"></div>
+    </div>
+    <div class="section-header">
+      <div class="section-title">Популярные скиллы</div>
+    </div>
+    <div class="table-wrap">
+      <table><thead><tr><th>Скилл</th><th>Вызовов</th></tr></thead><tbody id="topSkillsBody"></tbody></table>
+    </div>
+  </div>
+
+  <!-- ═══ Skills ═══ -->
+  <div class="page" id="page-skills">
+    <div class="page-title">Скиллы</div>
+    <div id="skillsList"></div>
+  </div>
+
+  <!-- ═══ Users ═══ -->
+  <div class="page" id="page-users">
+    <div class="page-title">Пользователи</div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>ID</th><th>Имя</th><th>Каналы</th><th>Сообщений</th><th>Последний визит</th><th>Роль</th><th></th></tr></thead>
+        <tbody id="usersBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ═══ LLM ═══ -->
+  <div class="page" id="page-llm">
+    <div class="page-title">Настройки LLM</div>
+    <div class="section-header">
+      <div class="section-title">Провайдеры</div>
+      <button class="btn btn-primary btn-sm" onclick="testLLM()">🧪 Тест</button>
+    </div>
+    <div id="llmProviders" class="mb-20"></div>
+    <div id="llmTestResult" class="mb-20" style="display:none"></div>
+    <div class="section-title mb-20">Настройки</div>
+    <div id="llmSettings" style="max-width:500px"></div>
+    <button class="btn btn-primary" onclick="saveLLM()" style="margin-top:12px">Сохранить</button>
+    <span id="llmSaveStatus" style="margin-left:12px;font-size:12px;color:var(--green);display:none">✓ Сохранено (требуется перезагрузка)</span>
+  </div>
+
+  <!-- ═══ Logs ═══ -->
+  <div class="page" id="page-logs">
+    <div class="section-header">
+      <div class="page-title" style="margin-bottom:0">Логи</div>
+      <div style="display:flex;gap:8px">
+        <select id="logFilter" onchange="loadLogs()" style="width:140px">
+          <option value="">Все</option>
+          <option value="message">Сообщения</option>
+          <option value="llm_call">LLM вызовы</option>
+          <option value="skill_call">Скиллы</option>
+          <option value="llm_error">Ошибки</option>
+        </select>
+        <button class="btn btn-sm" onclick="loadLogs()">↻</button>
+      </div>
+    </div>
+    <div class="table-wrap" id="logsWrap"></div>
+  </div>
+
+  <!-- ═══ Conversations ═══ -->
+  <div class="page" id="page-conversations">
+    <div class="page-title">Диалоги</div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>ID</th><th>Пользователь</th><th>Заголовок</th><th>Сообщений</th><th>Обновлён</th></tr></thead>
+        <tbody id="convsBody"></tbody>
+      </table>
+    </div>
+    <div id="convDetail" style="display:none">
+      <div class="section-header">
+        <div class="section-title" id="convDetailTitle">Диалог</div>
+        <button class="btn btn-sm" onclick="document.getElementById('convDetail').style.display='none'">✕ Закрыть</button>
+      </div>
+      <div class="table-wrap" id="convMessages" style="max-height:500px;overflow-y:auto;padding:12px"></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const API = '/admin/api';
+let TOKEN = localStorage.getItem('admin_token') || '';
+
+// ─── Auth ─────────────────────────────────────────────
+async function api(path, opts = {}) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (TOKEN) headers['Authorization'] = `Bearer ${TOKEN}`;
+  const r = await fetch(API + path, { ...opts, headers });
+  if (r.status === 401) { showLogin(); throw new Error('Unauthorized'); }
+  return r.json();
+}
+
+function showLogin() { document.getElementById('loginOverlay').style.display = 'flex'; }
+function hideLogin() { document.getElementById('loginOverlay').style.display = 'none'; }
+
+async function doLogin() {
+  const pwd = document.getElementById('loginPassword').value;
+  try {
+    const r = await fetch(API + '/auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: pwd })
+    });
+    if (!r.ok) { document.getElementById('loginError').style.display = 'block'; return; }
+    const data = await r.json();
+    TOKEN = data.token;
+    localStorage.setItem('admin_token', TOKEN);
+    hideLogin();
+    loadPage('dashboard');
+  } catch (e) { document.getElementById('loginError').style.display = 'block'; }
+}
+
+async function checkAuth() {
+  try { await api('/stats?hours=1'); hideLogin(); loadPage('dashboard'); }
+  catch { showLogin(); }
+}
+
+// ─── Navigation ───────────────────────────────────────
+document.querySelectorAll('.nav-item').forEach(el => {
+  el.addEventListener('click', () => {
+    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+    el.classList.add('active');
+    loadPage(el.dataset.page);
+  });
+});
+
+function loadPage(page) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById('page-' + page).classList.add('active');
+  switch (page) {
+    case 'dashboard': loadDashboard(); break;
+    case 'skills': loadSkills(); break;
+    case 'users': loadUsers(); break;
+    case 'llm': loadLLM(); break;
+    case 'logs': loadLogs(); break;
+    case 'conversations': loadConversations(); break;
+  }
+}
+
+// ─── Dashboard ────────────────────────────────────────
+async function loadDashboard() {
+  try {
+    const s = await api('/stats?hours=24');
+    document.getElementById('st-messages').textContent = s.total_messages;
+    document.getElementById('st-users').textContent = s.unique_users;
+    document.getElementById('st-errors').textContent = s.llm_errors;
+    document.getElementById('st-latency').textContent = s.avg_latency_ms || '—';
+    document.getElementById('st-tokens').textContent = s.total_tokens ? s.total_tokens.toLocaleString() : '0';
+
+    // Chart
+    const days = s.by_day || {};
+    const chart = document.getElementById('chartDays');
+    const vals = Object.values(days);
+    const max = Math.max(...vals, 1);
+    chart.innerHTML = Object.entries(days).map(([d, v]) =>
+      `<div class="chart-bar" style="height:${Math.max(v / max * 100, 2)}%">
+        <div class="chart-bar-value">${v}</div>
+        <div class="chart-bar-label">${d.slice(5)}</div>
+      </div>`
+    ).join('') || '<div class="empty-state" style="width:100%">Нет данных</div>';
+
+    // Top skills
+    const tbody = document.getElementById('topSkillsBody');
+    const skills = Object.entries(s.top_skills || {});
+    tbody.innerHTML = skills.length
+      ? skills.map(([n, c]) => `<tr><td>${esc(n)}</td><td><span class="badge badge-blue">${c}</span></td></tr>`).join('')
+      : '<tr><td colspan="2" class="empty-state">Нет данных</td></tr>';
+  } catch (e) { console.error('Dashboard error', e); }
+}
+
+// ─── Skills ───────────────────────────────────────────
+async function loadSkills() {
+  const skills = await api('/skills');
+  const el = document.getElementById('skillsList');
+  if (!skills.length) { el.innerHTML = '<div class="empty-state">Нет загруженных скиллов</div>'; return; }
+  el.innerHTML = skills.map(s => `
+    <div class="table-wrap" style="padding:16px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between">
+      <div>
+        <div style="font-weight:600;font-size:14px">${esc(s.name)} <span class="badge badge-gray">v${esc(s.version)}</span></div>
+        <div style="font-size:12px;color:var(--text-dim);margin-top:4px">${esc(s.description || '—')} · ${s.tools_count} инструментов</div>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" ${s.enabled ? 'checked' : ''} onchange="toggleSkill('${esc(s.name)}', this.checked)">
+        <div class="toggle-track"></div>
+        <div class="toggle-thumb"></div>
+      </label>
+    </div>
+  `).join('');
+}
+
+async function toggleSkill(name, enabled) {
+  await api(`/skills/${name}/toggle`, { method: 'POST', body: JSON.stringify({ enabled }) });
+}
+
+// ─── Users ────────────────────────────────────────────
+async function loadUsers() {
+  const users = await api('/users?include_blocked=true');
+  const tbody = document.getElementById('usersBody');
+  if (!users.length) { tbody.innerHTML = '<tr><td colspan="7" class="empty-state">Нет пользователей</td></tr>'; return; }
+  tbody.innerHTML = users.map(u => `
+    <tr>
+      <td><code style="font-size:11px">${esc(u.user_id)}</code></td>
+      <td>${esc(u.display_name || '—')}</td>
+      <td>${(u.channels || []).map(c => `<span class="badge badge-blue">${c}</span>`).join(' ')}</td>
+      <td>${u.message_count}</td>
+      <td style="font-size:12px;color:var(--text-dim)">${u.last_seen ? new Date(u.last_seen * 1000).toLocaleString('ru') : '—'}</td>
+      <td><span class="badge ${u.role === 'admin' ? 'badge-yellow' : 'badge-gray'}">${u.role}</span></td>
+      <td>
+        ${u.blocked
+          ? `<button class="btn btn-sm" onclick="unblockUser('${esc(u.user_id)}')">Разблокировать</button>`
+          : `<button class="btn btn-sm btn-danger" onclick="blockUser('${esc(u.user_id)}')">Блок</button>`
+        }
+      </td>
+    </tr>
+  `).join('');
+}
+
+async function blockUser(uid) {
+  await api(`/users/${uid}/block`, { method: 'POST', body: JSON.stringify({ blocked: true }) });
+  loadUsers();
+}
+
+async function unblockUser(uid) {
+  await api(`/users/${uid}/block`, { method: 'POST', body: JSON.stringify({ blocked: false }) });
+  loadUsers();
+}
+
+// ─── LLM ──────────────────────────────────────────────
+async function loadLLM() {
+  const data = await api('/llm');
+  // Providers
+  const prov = document.getElementById('llmProviders');
+  prov.innerHTML = (data.providers || []).map(p => `
+    <div class="table-wrap" style="padding:12px 16px;margin-bottom:8px;display:inline-flex;align-items:center;gap:12px">
+      <span class="badge badge-green">●</span>
+      <span style="font-weight:600">${esc(p.name)}</span>
+      <span style="color:var(--text-dim);font-size:12px">${esc(p.model)}</span>
+    </div>
+  `).join('') || '<div class="empty-state">Нет провайдеров</div>';
+
+  // Settings
+  const settings = data.settings || {};
+  const el = document.getElementById('llmSettings');
+  const fields = [
+    ['llm.provider', 'Primary provider'],
+    ['llm.gigachat_credentials', 'GigaChat credentials'],
+    ['llm.gigachat_model', 'GigaChat модель'],
+    ['llm.gigachat_scope', 'GigaChat scope'],
+    ['llm.claude_api_key', 'Claude API key'],
+    ['llm.claude_model', 'Claude модель'],
+  ];
+  el.innerHTML = fields.map(([key, label]) => `
+    <div class="form-group">
+      <label class="form-label">${label}</label>
+      <input type="${key.includes('key') || key.includes('credentials') ? 'password' : 'text'}" 
+             id="llm-${key}" value="${esc(settings[key] || '')}">
+    </div>
+  `).join('');
+}
+
+async function saveLLM() {
+  const settings = {};
+  document.querySelectorAll('#llmSettings input').forEach(inp => {
+    const key = inp.id.replace('llm-', '');
+    settings[key] = inp.value;
+  });
+  await api('/llm', { method: 'PUT', body: JSON.stringify({ settings }) });
+  const el = document.getElementById('llmSaveStatus');
+  el.style.display = 'inline';
+  setTimeout(() => el.style.display = 'none', 4000);
+}
+
+async function testLLM() {
+  const el = document.getElementById('llmTestResult');
+  el.style.display = 'block';
+  el.innerHTML = '<div class="table-wrap" style="padding:12px">Тестирую...</div>';
+  const r = await api('/llm/test', { method: 'POST' });
+  el.innerHTML = `<div class="table-wrap" style="padding:12px">
+    ${r.success
+      ? `<span class="badge badge-green">OK</span> ${esc(r.provider)} · ${r.latency_ms}мс · "${esc(r.response)}"`
+      : `<span class="badge badge-red">Ошибка</span> ${esc(r.error)}`
+    }
+  </div>`;
+}
+
+// ─── Logs ─────────────────────────────────────────────
+async function loadLogs() {
+  const filter = document.getElementById('logFilter').value;
+  const events = await api(`/logs?limit=100${filter ? '&event_type=' + filter : ''}`);
+  const el = document.getElementById('logsWrap');
+  if (!events.length) { el.innerHTML = '<div class="empty-state">Нет событий</div>'; return; }
+  el.innerHTML = events.map(e => {
+    const ts = new Date(e.timestamp * 1000).toLocaleString('ru');
+    const meta = e.metadata ? Object.entries(e.metadata).map(([k, v]) => `${k}=${v}`).join(' ') : '';
+    return `<div class="log-entry">
+      <span class="log-ts">${ts}</span>
+      <span class="log-type ${e.event_type}">${e.event_type}</span>
+      <span style="color:var(--text);width:90px">${esc(e.user_id || '')}</span>
+      <span class="log-meta">${esc(meta)}</span>
+    </div>`;
+  }).join('');
+}
+
+// ─── Conversations ────────────────────────────────────
+async function loadConversations() {
+  const chats = await api('/conversations?limit=30');
+  const tbody = document.getElementById('convsBody');
+  if (!chats.length) { tbody.innerHTML = '<tr><td colspan="5" class="empty-state">Нет диалогов</td></tr>'; return; }
+  tbody.innerHTML = chats.map(c => `
+    <tr style="cursor:pointer" onclick="loadConversation(${c.id}, '${esc(c.title || 'Без заголовка')}')">
+      <td>${c.id}</td>
+      <td><code style="font-size:11px">${esc(c.user_id)}</code></td>
+      <td>${esc(c.title || '—')}</td>
+      <td>${c.message_count || 0}</td>
+      <td style="font-size:12px;color:var(--text-dim)">${c.updated_at || '—'}</td>
+    </tr>
+  `).join('');
+}
+
+async function loadConversation(chatId, title) {
+  const data = await api(`/conversations/${chatId}`);
+  document.getElementById('convDetailTitle').textContent = `Диалог: ${title}`;
+  const el = document.getElementById('convMessages');
+  el.innerHTML = (data.messages || []).map(m => {
+    const isUser = m.role === 'user';
+    const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content).slice(0, 300);
+    return `<div style="padding:8px 0;border-bottom:1px solid var(--border)">
+      <span class="badge ${isUser ? 'badge-blue' : 'badge-green'}">${m.role}</span>
+      <span style="font-size:11px;color:var(--text-muted);margin-left:8px">${m.created_at || ''}</span>
+      <div style="margin-top:6px;font-size:13px;line-height:1.5;white-space:pre-wrap">${esc(content)}</div>
+    </div>`;
+  }).join('') || '<div class="empty-state">Пустой диалог</div>';
+  document.getElementById('convDetail').style.display = 'block';
+}
+
+// ─── Helpers ──────────────────────────────────────────
+function esc(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+
+// ─── Init ─────────────────────────────────────────────
+checkAuth();
+</script>
+</body>
+</html>
