@@ -78,188 +78,166 @@ class MaxChannel(BaseChannel):
         self._dp = None
     
     async def start(self):
-        """Запускает MAX бот через polling или webhook."""
+        """Запускает MAX бот — свой polling без SDK Dispatcher.
+        
+        MAX SDK (maxapi) имеет баги в polling:
+        - Не передаёт marker в get_updates → дубли между poll-циклами
+        - Dispatcher вызывает handler несколько раз на 1 event
+        Поэтому реализуем polling напрямую через API.
+        """
+        import asyncio
+        import aiohttp
+        
         try:
-            from maxapi import Bot, Dispatcher
-            from maxapi.types import MessageCreated, BotStarted
-            from maxapi.methods.get_updates import GetUpdates
+            from maxapi import Bot
         except ImportError:
             logger.error("maxapi_not_installed", hint="pip install git+https://github.com/max-messenger/max-botapi-python.git")
             return
         
-        # ── Фикс бага MAX SDK: get_updates не передаёт marker ──
-        # Без marker API возвращает одни и те же события при каждом poll.
-        # Дополнительно: дедупликация events по mid (в рамках одного poll и между polls).
-        _seen_mids: set[str] = set()
-        _orig_fetch = GetUpdates.fetch
-        async def _patched_fetch(self_gu):
-            params = self_gu.bot.params.copy()
-            params['limit'] = self_gu.limit
-            if self_gu.bot.marker_updates is not None:
-                params['marker'] = self_gu.bot.marker_updates
-            from maxapi.enums.http_method import HTTPMethod
-            from maxapi.enums.api_path import ApiPath
-            from maxapi.connection.base import BaseConnection
-            event_json = await BaseConnection.request(
-                self_gu,
-                method=HTTPMethod.GET,
-                path=ApiPath.UPDATES,
-                model=None,
-                params=params,
-                is_return_raw=True,
-            )
-            updates = event_json.get('updates', [])
-            if updates:
-                logger.info("max_poll_raw", count=len(updates), marker=params.get('marker'),
-                            new_marker=event_json.get('marker'))
-                # Дедупликация по mid — и внутри батча, и между poll-циклами
-                deduped = []
-                for u in updates:
-                    mid = None
-                    try:
-                        mid = u.get('message', {}).get('body', {}).get('mid')
-                    except Exception:
-                        pass
-                    if mid and mid in _seen_mids:
-                        continue
-                    if mid:
-                        _seen_mids.add(mid)
-                    deduped.append(u)
-                # Ограничиваем размер кеша
-                if len(_seen_mids) > 1000:
-                    _seen_mids.clear()
-                if len(deduped) < len(updates):
-                    logger.info("max_poll_deduped", before=len(updates), after=len(deduped))
-                event_json['updates'] = deduped
-            return event_json
-        GetUpdates.fetch = _patched_fetch
-        logger.info("max_sdk_marker_fix_applied")
-        # ── Конец фикса ──
-        
+        API_URL = "https://botapi.max.ru"
         self._bot = Bot(self.token)
-        self._dp = Dispatcher()
         self._bot_username = None
         self._bot_id = None
-        _seen_mids: set[str] = set()  # дедуп на уровне handler
         
-        @self._dp.bot_started()
-        async def on_start(event: BotStarted):
-            msg = Message(
-                id=str(uuid.uuid4()),
-                channel=self.name,
-                user_id=str(event.user.user_id),
-                chat_id=str(event.chat_id),
-                text="/start",
-                role=MessageRole.USER,
-            )
-            await self._dispatch(msg)
+        # Получаем инфо бота
+        try:
+            me = await self._bot.get_me()
+            self._bot_username = (me.username or "").lower()
+            self._bot_id = me.user_id
+            logger.info("max_bot_info", username=self._bot_username, bot_id=self._bot_id)
+        except Exception as e:
+            logger.error("max_bot_info_error", error=str(e)[:100])
+            self._bot_username = ""
+            self._bot_id = 0
         
-        @self._dp.message_created()
-        async def on_message(event: MessageCreated):
-            m = event.message
-            text = m.body.text if m.body else None
-            mid = m.body.mid if m.body else str(uuid.uuid4())
-            chat_id = str(m.recipient.chat_id) if m.recipient else "0"
-            user_id = str(m.sender.user_id) if m.sender else "unknown"
-
-            # Дедупликация по mid — SDK может вызвать handler несколько раз
-            if mid in _seen_mids:
-                return
-            _seen_mids.add(mid)
-            if len(_seen_mids) > 1000:
-                # Оставляем последние 500
-                to_remove = list(_seen_mids)[:500]
-                for k in to_remove:
-                    _seen_mids.discard(k)
-
-            # Кеш bot info
-            if self._bot_username is None:
+        logger.info("max_channel_starting", polling=True)
+        
+        marker = None
+        seen_mids: set[str] = set()
+        
+        async with aiohttp.ClientSession() as session:
+            while True:
                 try:
-                    me = await self._bot.get_me()
-                    self._bot_username = (me.username or "").lower()
-                    self._bot_id = me.user_id
-                except Exception:
-                    self._bot_username = ""
-                    self._bot_id = 0
-
-            # Фильтрация в групповых чатах
-            addressed = True
-            try:
-                from maxapi.enums.chat_type import ChatType
-                is_group = m.recipient and m.recipient.chat_type == ChatType.CHAT
-            except Exception:
-                is_group = False
-
-            if is_group:
-                txt = text or ""
-                is_command = txt.startswith("/")
-                is_mention = self._bot_username and f"@{self._bot_username}" in txt.lower()
-                addressed = is_command or is_mention
-
-            # Убираем @mention из текста
-            clean_text = text or ""
-            if self._bot_username and f"@{self._bot_username}" in clean_text.lower():
-                import re
-                clean_text = re.sub(f"@{re.escape(self._bot_username)}", "", clean_text, flags=re.IGNORECASE).strip()
-
-            sender_name = ""
-            if m.sender:
-                sender_name = getattr(m.sender, "first_name", "") or ""
-                ln = getattr(m.sender, "last_name", "") or ""
-                if ln:
-                    sender_name = f"{sender_name} {ln}".strip()
-
-            # Скачиваем вложения (картинки, файлы)
-            from pyatnitsa.core.models import Attachment
-            attachments = []
-            for att in (m.body.attachments or []):
-                try:
-                    att_type_str = getattr(att, "type", None) or ""
-                    payload = getattr(att, "payload", None)
-                    if not payload:
-                        continue
-                    url = getattr(payload, "url", None)
-                    token = getattr(payload, "token", None)
-                    if not url:
-                        continue
-
-                    import httpx
-                    download_url = url
-                    if token:
-                        download_url = f"{url}?token={token}" if "?" not in url else f"{url}&token={token}"
-                    async with httpx.AsyncClient(timeout=30) as client:
-                        resp = await client.get(download_url)
-                        if resp.status_code != 200:
-                            logger.warning("max_download_failed", url=url[:80], status=resp.status_code)
+                    params = {"access_token": self.token, "limit": 100}
+                    if marker is not None:
+                        params["marker"] = marker
+                    
+                    async with session.get(f"{API_URL}/updates", params=params, timeout=aiohttp.ClientTimeout(total=35)) as resp:
+                        if resp.status != 200:
+                            logger.warning("max_poll_error", status=resp.status)
+                            await asyncio.sleep(5)
                             continue
-                        data = resp.content
-                        content_type = resp.headers.get("content-type", "")
-
-                    fname = getattr(att, "filename", None) or "file"
-                    if att_type_str in ("image", "IMAGE"):
-                        mime = content_type.split(";")[0].strip() if content_type else "image/jpeg"
-                        if not fname or fname == "file":
-                            ext = mime.split("/")[-1] if "/" in mime else "jpg"
-                            fname = f"image.{ext}"
-                        attachments.append(Attachment(type="image", data=data, filename=fname, mime_type=mime))
-                    else:
-                        mime = content_type.split(";")[0].strip() if content_type else None
-                        attachments.append(Attachment(type="file", data=data, filename=fname, mime_type=mime))
+                        data = await resp.json()
+                    
+                    new_marker = data.get("marker")
+                    updates = data.get("updates", [])
+                    
+                    if new_marker:
+                        marker = new_marker
+                    
+                    for event in updates:
+                        try:
+                            if event.get("update_type") != "message_created":
+                                continue
+                            msg_data = event.get("message", {})
+                            body = msg_data.get("body", {})
+                            mid = body.get("mid")
+                            
+                            # Дедупликация
+                            if mid and mid in seen_mids:
+                                continue
+                            if mid:
+                                seen_mids.add(mid)
+                            if len(seen_mids) > 2000:
+                                seen_mids.clear()
+                            
+                            await self._handle_raw_event(msg_data, mid)
+                        except Exception as e:
+                            logger.error("max_event_error", error=str(e)[:200])
+                
+                except asyncio.TimeoutError:
+                    continue
+                except aiohttp.ClientConnectorError:
+                    logger.warning("max_connection_error")
+                    await asyncio.sleep(10)
                 except Exception as e:
-                    logger.warning("max_attachment_error", error=str(e)[:120])
-
-            msg = Message(
-                id=mid,
-                channel=self.name,
-                user_id=user_id,
-                chat_id=chat_id,
-                text=clean_text,
-                attachments=attachments,
-                listen_only=not addressed,
-                role=MessageRole.USER,
-                raw={"sender_name": sender_name},
-            )
-            await self._dispatch(msg)
+                    logger.error("max_poll_loop_error", error=str(e)[:200])
+                    await asyncio.sleep(5)
+    
+    async def _handle_raw_event(self, msg_data: dict, mid: str):
+        """Обрабатывает сырой event из MAX API."""
+        body = msg_data.get("body", {})
+        text = body.get("text")
+        
+        sender = msg_data.get("sender", {})
+        user_id = str(sender.get("user_id", "unknown"))
+        sender_name = (sender.get("first_name", "") + " " + sender.get("last_name", "")).strip()
+        
+        recipient = msg_data.get("recipient", {})
+        chat_id = str(recipient.get("chat_id", "0"))
+        chat_type = recipient.get("chat_type", "dialog")
+        
+        # Фильтрация в групповых чатах
+        addressed = True
+        if chat_type == "chat":
+            txt = text or ""
+            is_command = txt.startswith("/")
+            is_mention = self._bot_username and f"@{self._bot_username}" in txt.lower()
+            addressed = is_command or is_mention
+        
+        # Убираем @mention
+        clean_text = text or ""
+        if self._bot_username and f"@{self._bot_username}" in clean_text.lower():
+            import re
+            clean_text = re.sub(f"@{re.escape(self._bot_username)}", "", clean_text, flags=re.IGNORECASE).strip()
+        
+        # Скачиваем вложения
+        from pyatnitsa.core.models import Attachment
+        attachments = []
+        for att in body.get("attachments", []):
+            try:
+                att_type = att.get("type", "")
+                payload = att.get("payload", {})
+                url = payload.get("url")
+                token = payload.get("token")
+                if not url:
+                    continue
+                
+                import httpx
+                download_url = f"{url}?token={token}" if token else url
+                async with httpx.AsyncClient(timeout=30) as client:
+                    resp = await client.get(download_url)
+                    if resp.status_code != 200:
+                        logger.warning("max_download_failed", status=resp.status_code)
+                        continue
+                    data = resp.content
+                    content_type = resp.headers.get("content-type", "")
+                
+                fname = payload.get("file_name") or att.get("filename") or "file"
+                if att_type in ("image", "IMAGE"):
+                    mime = content_type.split(";")[0].strip() if content_type else "image/jpeg"
+                    if fname == "file":
+                        ext = mime.split("/")[-1] if "/" in mime else "jpg"
+                        fname = f"image.{ext}"
+                    attachments.append(Attachment(type="image", data=data, filename=fname, mime_type=mime))
+                else:
+                    mime = content_type.split(";")[0].strip() if content_type else None
+                    attachments.append(Attachment(type="file", data=data, filename=fname, mime_type=mime))
+            except Exception as e:
+                logger.warning("max_attachment_error", error=str(e)[:120])
+        
+        msg = Message(
+            id=mid or str(uuid.uuid4()),
+            channel=self.name,
+            user_id=user_id,
+            chat_id=chat_id,
+            text=clean_text,
+            attachments=attachments,
+            listen_only=not addressed,
+            role=MessageRole.USER,
+            raw={"sender_name": sender_name},
+        )
+        await self._dispatch(msg)
         
         logger.info("max_channel_starting", polling=self.use_polling)
         
