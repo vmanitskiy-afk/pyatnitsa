@@ -61,7 +61,12 @@ class BaseChannel(ABC):
 # ─── MAX Messenger ───────────────────────────────────────────
 
 class MaxChannel(BaseChannel):
-    """Канал MAX мессенджер (через max-botapi-python)."""
+    """Канал MAX мессенджер (через max-botapi-python).
+    
+    ВАЖНО: В MAX SDK баг — get_updates не передаёт marker обратно в API,
+    из-за чего каждый poll возвращает одни и те же события.
+    Фикс: monkey-patch GetUpdates.fetch для передачи marker.
+    """
     
     name = "max"
     
@@ -71,24 +76,45 @@ class MaxChannel(BaseChannel):
         self.use_polling = use_polling
         self._bot = None
         self._dp = None
-        self._seen_mids: dict[str, float] = {}  # дедупликация: hash -> timestamp
-        self._dedup_lock = None  # инициализируем в start() т.к. нужен event loop
     
     async def start(self):
         """Запускает MAX бот через polling или webhook."""
         try:
             from maxapi import Bot, Dispatcher
             from maxapi.types import MessageCreated, BotStarted
+            from maxapi.methods.get_updates import GetUpdates
         except ImportError:
             logger.error("maxapi_not_installed", hint="pip install git+https://github.com/max-messenger/max-botapi-python.git")
             return
+        
+        # ── Фикс бага MAX SDK: get_updates не передаёт marker ──
+        # Без marker API возвращает одни и те же события при каждом poll.
+        _orig_fetch = GetUpdates.fetch
+        async def _patched_fetch(self_gu):
+            params = self_gu.bot.params.copy()
+            params['limit'] = self_gu.limit
+            if self_gu.bot.marker_updates is not None:
+                params['marker'] = self_gu.bot.marker_updates
+            from maxapi.enums.http_method import HTTPMethod
+            from maxapi.enums.api_path import ApiPath
+            from maxapi.connection.base import BaseConnection
+            event_json = await BaseConnection.request(
+                self_gu,
+                method=HTTPMethod.GET,
+                path=ApiPath.UPDATES,
+                model=None,
+                params=params,
+                is_return_raw=True,
+            )
+            return event_json
+        GetUpdates.fetch = _patched_fetch
+        logger.info("max_sdk_marker_fix_applied")
+        # ── Конец фикса ──
         
         self._bot = Bot(self.token)
         self._dp = Dispatcher()
         self._bot_username = None
         self._bot_id = None
-        import asyncio as _aio
-        self._dedup_lock = _aio.Lock()
         
         @self._dp.bot_started()
         async def on_start(event: BotStarted):
@@ -109,19 +135,6 @@ class MaxChannel(BaseChannel):
             mid = m.body.mid if m.body else str(uuid.uuid4())
             chat_id = str(m.recipient.chat_id) if m.recipient else "0"
             user_id = str(m.sender.user_id) if m.sender else "unknown"
-
-            # Дедупликация — MAX polling доставляет одно сообщение несколько раз
-            import hashlib, time as _time
-            att_count = len(m.body.attachments or [])
-            dedup_key = f"{user_id}:{text or ''}:{att_count}"
-            dedup_hash = hashlib.md5(dedup_key.encode()).hexdigest()[:16]
-            now = _time.time()
-            async with self._dedup_lock:
-                self._seen_mids = {k: v for k, v in self._seen_mids.items() if now - v < 30}
-                if dedup_hash in self._seen_mids:
-                    logger.debug("max_dedup_skip", mid=mid, user_id=user_id)
-                    return
-                self._seen_mids[dedup_hash] = now
 
             # Кеш bot info
             if self._bot_username is None:
@@ -145,7 +158,6 @@ class MaxChannel(BaseChannel):
                 txt = text or ""
                 is_command = txt.startswith("/")
                 is_mention = self._bot_username and f"@{self._bot_username}" in txt.lower()
-                # В MAX нет reply_to как в TG, проверяем только команды и упоминания
                 addressed = is_command or is_mention
 
             # Убираем @mention из текста
@@ -175,14 +187,12 @@ class MaxChannel(BaseChannel):
                     if not url:
                         continue
 
-                    # Скачиваем файл по url+token
                     import httpx
-                    headers = {}
                     download_url = url
                     if token:
                         download_url = f"{url}?token={token}" if "?" not in url else f"{url}&token={token}"
                     async with httpx.AsyncClient(timeout=30) as client:
-                        resp = await client.get(download_url, headers=headers)
+                        resp = await client.get(download_url)
                         if resp.status_code != 200:
                             logger.warning("max_download_failed", url=url[:80], status=resp.status_code)
                             continue
