@@ -71,6 +71,7 @@ class MaxChannel(BaseChannel):
         self.use_polling = use_polling
         self._bot = None
         self._dp = None
+        self._seen_mids: set[str] = set()  # дедупликация
     
     async def start(self):
         """Запускает MAX бот через polling или webhook."""
@@ -105,6 +106,13 @@ class MaxChannel(BaseChannel):
             mid = m.body.mid if m.body else str(uuid.uuid4())
             chat_id = str(m.recipient.chat_id) if m.recipient else "0"
             user_id = str(m.sender.user_id) if m.sender else "unknown"
+
+            # Дедупликация — MAX polling может доставить одно сообщение несколько раз
+            if mid in self._seen_mids:
+                return
+            self._seen_mids.add(mid)
+            if len(self._seen_mids) > 500:
+                self._seen_mids = set(list(self._seen_mids)[-250:])
 
             # Кеш bot info
             if self._bot_username is None:
