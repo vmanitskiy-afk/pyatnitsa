@@ -666,6 +666,22 @@ body {
           </div>
         </div>
 
+        <!-- Files -->
+        <div class="settings-section" id="sectionFiles">
+          <div class="settings-section-header" onclick="toggleSection('sectionFiles')">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent2)" stroke-width="2"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+            Файлы
+            <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+          </div>
+          <div class="settings-section-body">
+            <div class="field">
+              <label>files.workspace</label>
+              <input type="text" data-key="files.workspace" placeholder="/Users/vlad/Documents">
+              <div class="hint">Рабочая папка — агент получит доступ к файлам в этой директории. После изменения нажмите «Сохранить и перезапустить».</div>
+            </div>
+          </div>
+        </div>
+
         <!-- System -->
         <div class="settings-section" id="sectionSystem">
           <div class="settings-section-header" onclick="toggleSection('sectionSystem')">
