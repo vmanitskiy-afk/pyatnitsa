@@ -105,30 +105,12 @@ async def websocket_chat(ws: WebSocket):
                             if "tool_use" in s[:80] or "tool_result" in s[:80]: continue
                             import re as _hre
 
-                            # Извлекаем файловые ссылки [file:id:name] ДО удаления
-                            file_attachments = []
-                            for fm in _hre.finditer(r"\[file:([^:]+):([^\]]+)\]", s):
-                                fid, fname = fm.group(1), fm.group(2)
-                                furl = f"/api/files/{fid}/{fname}"
-                                # Определяем mime по расширению
-                                ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ""
-                                if ext in ("jpg", "jpeg", "png", "gif", "webp", "bmp", "svg"):
-                                    mime = f"image/{ext}" if ext != "jpg" else "image/jpeg"
-                                else:
-                                    mime = None
-                                file_attachments.append({"url": furl, "name": fname, "mime_type": mime})
-
                             s = _hre.sub(r"\[File:[^\]]*\][\s\S]*?\[/File\]", "", s)
                             s = _hre.sub(r"\[File:[^\]]*\]", "", s)
                             s = _hre.sub(r"\[Image:[^\]]*\]", "", s)
-                            s = _hre.sub(r"\[file:[^\]]*\]", "", s)
                             s = _hre.sub(r"\[📎[^\]]*\]", "", s)
                             s = s.strip()
-                            entry = {"role": m.role, "text": s}
-                            if file_attachments:
-                                entry["attachments"] = file_attachments
-                            if s or file_attachments:
-                                history.append(entry)
+                            if s: history.append({"role": m.role, "text": s})
                         await ws.send_text(json.dumps({"type": "history", "messages": history, "chat_title": chat.title}))
                     except Exception as e:
                         logger.error("ws_history_error", error=str(e))
