@@ -200,9 +200,11 @@ class Agent:
                 abs_path = os.path.abspath(file_path)
 
                 # Картинки -> отдельно для vision
-                if (att.mime_type or "").startswith("image/"):
+                is_image = (att.mime_type or "").startswith("image/") or att.type == "image"
+                if is_image:
+                    mime = att.mime_type or "image/jpeg"
                     raw = open(abs_path, "rb").read()
-                    images.append({"data": raw, "mime_type": att.mime_type, "filename": fname, "path": abs_path})
+                    images.append({"data": raw, "mime_type": mime, "filename": fname, "path": abs_path})
                     parts.append(f"[Image: {fname} | path: {abs_path}]")
                     continue
 

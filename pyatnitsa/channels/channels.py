@@ -300,8 +300,16 @@ class TelegramChannel(BaseChannel):
                     file_info = await self._bot.get_file(tg_file.file_id)
                     result = await self._bot.download_file(file_info.file_path)
                     data = result.read() if hasattr(result, "read") else result
-                    fname = getattr(tg_file, "file_name", None) or f"tg_{tg_file.file_id}"
+                    fname = getattr(tg_file, "file_name", None)
                     mime = getattr(tg_file, "mime_type", None)
+                    if tg_message.photo:
+                        # PhotoSize не имеет mime_type/file_name — определяем из file_path
+                        ext = (file_info.file_path or "jpg").rsplit(".", 1)[-1] or "jpg"
+                        if not mime:
+                            mime = "image/jpeg" if ext == "jpg" else f"image/{ext}"
+                        fname = fname or f"photo_{tg_file.file_id}.{ext}"
+                    else:
+                        fname = fname or f"file_{tg_file.file_id}"
                     att_type = "image" if tg_message.photo else "file"
                     attachments.append(Attachment(type=att_type, data=data, filename=fname, mime_type=mime))
                 except Exception as e:
