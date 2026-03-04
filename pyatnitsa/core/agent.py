@@ -93,9 +93,11 @@ class Agent:
             if now - last < 5.0 and not text.startswith("/"):
                 logger.info("agent_dedup_skip", user_id=user_id, gap=round(now - last, 2))
                 return Response(text=None)
-            result = await self._handle_message_inner(message, user_id, text)
-            self._user_last_msg[user_id] = _time.time()  # ставим при ЗАВЕРШЕНИИ
-            return result
+            try:
+                result = await self._handle_message_inner(message, user_id, text)
+                return result
+            finally:
+                self._user_last_msg[user_id] = _time.time()
 
     async def _handle_message_inner(self, message: Message, user_id: str, text: str) -> Response:
 
