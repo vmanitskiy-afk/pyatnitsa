@@ -669,6 +669,25 @@ class RedmineSkill(BaseSkill):
                     "project": {"type": "string", "description": "Идентификатор проекта"},
                 }, "required": ["project"],
             }),
+            LLMTool("redmine.statuses", "Список статусов задач в Redmine", {
+                "type": "object", "properties": {},
+            }),
+            LLMTool("redmine.trackers", "Список трекеров (типов задач) в Redmine", {
+                "type": "object", "properties": {},
+            }),
+            LLMTool("redmine.set_group_roles", "Назначить роли группе в проекте (fuzzy поиск группы по имени)", {
+                "type": "object", "properties": {
+                    "project": {"type": "string", "description": "ID или идентификатор проекта"},
+                    "group": {"type": "string", "description": "Название группы (fuzzy поиск)"},
+                    "roles": {"type": "string", "description": "Роли через запятую (названия или ID)"},
+                }, "required": ["project", "group", "roles"],
+            }),
+            LLMTool("redmine.update_deal_template", "Обновить шаблон Сделка 2.0 из живого проекта (сохраняет JSON-снапшот настроек)", {
+                "type": "object", "properties": {
+                    "project": {"type": "string", "description": "ID или идентификатор проекта-шаблона"},
+                    "output": {"type": "string", "description": "Путь для сохранения JSON (опционально)"},
+                }, "required": ["project"],
+            }),
         ]
 
     # ═══════════════════════════════════════════════════════
@@ -692,6 +711,10 @@ class RedmineSkill(BaseSkill):
                 "attach": self._attach,
                 "apply_custom_menu": self._apply_custom_menu,
                 "inspect_cfs": self._inspect_cfs,
+                "statuses": self._list_statuses,
+                "trackers": self._list_trackers,
+                "set_group_roles": self._set_group_roles,
+                "update_deal_template": self._update_deal_template,
             }.get(action)
             if not handler:
                 return json.dumps({"error": f"Неизвестное действие: {action}"}, ensure_ascii=False)
@@ -1517,3 +1540,332 @@ class RedmineSkill(BaseSkill):
             result["warnings"] = all_warnings
 
         return json.dumps(result, ensure_ascii=False)
+
+
+    # ── statuses / trackers ──────────────────────────────
+
+    async def _list_statuses(self, p):
+        data = await self._api("GET", "/issue_statuses.json")
+        statuses = [{"id": s["id"], "name": s["name"], "is_closed": s.get("is_closed", False)}
+                    for s in data.get("issue_statuses", [])]
+        return json.dumps(statuses, ensure_ascii=False)
+
+    async def _list_trackers(self, p):
+        data = await self._api("GET", "/trackers.json")
+        trackers = [{"id": t["id"], "name": t["name"]} for t in data.get("trackers", [])]
+        return json.dumps(trackers, ensure_ascii=False)
+
+    # ── set_group_roles ──────────────────────────────────
+
+    async def _set_group_roles(self, p):
+        project = p["project"]
+        group_name = p["group"]
+        roles_str = p["roles"]
+
+        # 1) Resolve project id
+        proj_data = await self._api("GET", f"/projects/{project}.json")
+        project_id = proj_data["project"]["id"]
+
+        # 2) Resolve group — try /groups.json (admin), fallback to memberships
+        all_groups = []
+        try:
+            gdata = await self._api("GET", "/groups.json")
+            all_groups = [{"id": g["id"], "name": g["name"]} for g in gdata.get("groups", [])]
+        except Exception:
+            pass
+
+        if not all_groups:
+            # Scan project memberships
+            offset = 0
+            while True:
+                mdata = await self._api("GET", f"/projects/{project_id}/memberships.json",
+                                        params={"limit": 100, "offset": offset})
+                batch = mdata.get("memberships", [])
+                for m in batch:
+                    if m.get("group"):
+                        g = m["group"]
+                        if not any(x["id"] == g["id"] for x in all_groups):
+                            all_groups.append({"id": g["id"], "name": g["name"]})
+                if len(batch) < 100:
+                    break
+                offset += 100
+
+            # Also try parent project
+            if not all_groups:
+                try:
+                    parent_id = proj_data["project"].get("parent", {}).get("id")
+                    if parent_id:
+                        pmem = await self._api("GET", f"/projects/{parent_id}/memberships.json",
+                                               params={"limit": 200})
+                        for m in pmem.get("memberships", []):
+                            if m.get("group"):
+                                g = m["group"]
+                                if not any(x["id"] == g["id"] for x in all_groups):
+                                    all_groups.append({"id": g["id"], "name": g["name"]})
+                except Exception:
+                    pass
+
+        needle = group_name.lower()
+        exact = [g for g in all_groups if g["name"].lower() == needle]
+        if exact:
+            group = exact[0]
+        else:
+            partial = [g for g in all_groups if needle in g["name"].lower()]
+            if len(partial) == 0:
+                return json.dumps({"error": f"Group '{group_name}' not found. Available: {[g['name'] for g in all_groups]}"}, ensure_ascii=False)
+            elif len(partial) > 1:
+                return json.dumps({"error": f"Multiple groups match '{group_name}': {[g['name'] for g in partial]}"}, ensure_ascii=False)
+            group = partial[0]
+
+        # 3) Resolve role IDs
+        all_roles = []
+        try:
+            rdata = await self._api("GET", "/roles.json")
+            all_roles = rdata.get("roles", [])
+        except Exception:
+            pass
+
+        requested = [r.strip() for r in roles_str.split(",")]
+        role_ids = []
+        for req in requested:
+            if req.isdigit():
+                role_ids.append(int(req))
+            else:
+                match = next((r for r in all_roles if r["name"].lower() == req.lower()), None)
+                if not match:
+                    match = next((r for r in all_roles if req.lower() in r["name"].lower()), None)
+                if match:
+                    role_ids.append(match["id"])
+                else:
+                    return json.dumps({"error": f"Role '{req}' not found. Available: {[r['name'] for r in all_roles]}"}, ensure_ascii=False)
+
+        # 4) Check if group already has membership → update or create
+        mdata = await self._api("GET", f"/projects/{project_id}/memberships.json", params={"limit": 200})
+        existing_membership = None
+        for m in mdata.get("memberships", []):
+            if m.get("group") and m["group"]["id"] == group["id"]:
+                existing_membership = m
+                break
+
+        if existing_membership:
+            # Merge with existing roles
+            existing_role_ids = [r["id"] for r in existing_membership.get("roles", [])]
+            merged = list(set(existing_role_ids + role_ids))
+            await self._api("PUT", f"/memberships/{existing_membership['id']}.json",
+                            body={"membership": {"role_ids": merged}})
+            action_taken = "updated"
+        else:
+            await self._api("POST", f"/projects/{project_id}/memberships.json",
+                            body={"membership": {"group_id": group["id"], "role_ids": role_ids}})
+            action_taken = "created"
+
+        return json.dumps({
+            "success": True, "action": action_taken,
+            "project_id": project_id, "group": group["name"], "group_id": group["id"],
+            "role_ids": role_ids,
+        }, ensure_ascii=False)
+
+    # ── update_deal_template ─────────────────────────────
+
+    async def _update_deal_template(self, p):
+        import os as _os
+        project_id = p["project"]
+        home = _os.path.expanduser("~")
+        output_dir = _os.path.join(home, ".pyatnitsa", "redmine-templates")
+        _os.makedirs(output_dir, exist_ok=True)
+        json_path = p.get("output") or _os.path.join(output_dir, "DEAL-2.0-PROJECT-SETTINGS.json")
+
+        # Load existing (for merging)
+        existing = {}
+        try:
+            with open(json_path, encoding="utf-8") as f:
+                existing = json.load(f)
+        except Exception:
+            pass
+
+        # Step 1: Project info
+        proj_data = await self._api("GET", f"/projects/{project_id}.json",
+                                    params={"include": "trackers,enabled_modules,issue_categories,custom_fields"})
+        proj = proj_data["project"]
+        visible_cfs = [{"id": cf["id"], "name": cf["name"], "value": cf.get("value")}
+                       for cf in proj.get("custom_fields", [])]
+
+        # Step 2: Memberships (paginated)
+        all_memberships = []
+        offset = 0
+        while True:
+            mdata = await self._api("GET", f"/projects/{project_id}/memberships.json",
+                                    params={"limit": 100, "offset": offset})
+            batch = mdata.get("memberships", [])
+            all_memberships.extend(batch)
+            if len(batch) < 100:
+                break
+            offset += 100
+
+        # Step 3: Versions
+        versions = []
+        try:
+            vdata = await self._api("GET", f"/projects/{project_id}/versions.json")
+            versions = vdata.get("versions", [])
+        except Exception:
+            pass
+
+        # Step 4: Issue custom fields (multi-strategy)
+        issue_cfs = []
+
+        # Approach 1: include=issue_custom_fields
+        try:
+            d = await self._api("GET", f"/projects/{project_id}.json",
+                                params={"include": "issue_custom_fields"})
+            if d["project"].get("issue_custom_fields"):
+                issue_cfs = [{"id": f["id"], "name": f["name"]}
+                             for f in d["project"]["issue_custom_fields"]]
+        except Exception:
+            pass
+
+        # Approach 2: /custom_fields.json (admin only)
+        if not issue_cfs:
+            try:
+                d = await self._api("GET", "/custom_fields.json")
+                issue_cfs = [{"id": f["id"], "name": f["name"]}
+                             for f in d.get("custom_fields", [])
+                             if f.get("customized_type") == "issue"]
+            except Exception:
+                pass
+
+        # Approach 3: Scan issues in project
+        if not issue_cfs:
+            cf_map = {}
+            try:
+                idata = await self._api("GET", "/issues.json",
+                                        params={"project_id": project_id, "limit": 10, "status_id": "*"})
+                for issue in idata.get("issues", [])[:5]:
+                    try:
+                        idet = await self._api("GET", f"/issues/{issue['id']}.json",
+                                               params={"include": "custom_fields"})
+                        for cf in idet.get("issue", {}).get("custom_fields", []):
+                            if cf["id"] not in cf_map:
+                                cf_map[cf["id"]] = cf["name"]
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+            if cf_map:
+                issue_cfs = [{"id": k, "name": v} for k, v in sorted(cf_map.items())]
+
+        # Fallback: keep existing if we found nothing
+        if not issue_cfs and existing.get("issue_custom_fields"):
+            issue_cfs = existing["issue_custom_fields"]
+
+        # Step 5: Custom menu
+        custom_menu = []
+        for ep in [f"/projects/{project_id}/easy_custom_menus.json",
+                   f"/easy_custom_menus.json?project_id={project_id}"]:
+            try:
+                d = await self._api("GET", ep)
+                items = d.get("easy_custom_menus") or d.get("custom_menus") or []
+                if items:
+                    custom_menu = [{"id": m.get("id"), "name": m.get("name") or m.get("label"),
+                                    "url": m.get("url"), "position": m.get("position", i + 1)}
+                                   for i, m in enumerate(items)]
+                    break
+            except Exception:
+                continue
+        if not custom_menu and existing.get("custom_menu"):
+            custom_menu = existing["custom_menu"]
+
+        # Step 6: Assemble groups
+        group_map = {}
+        for m in all_memberships:
+            if m.get("group"):
+                gid = m["group"]["id"]
+                if gid not in group_map:
+                    group_map[gid] = {"id": gid, "name": m["group"]["name"],
+                                      "type": "group", "role_ids": [], "role_names": []}
+                for r in m.get("roles", []):
+                    if r["id"] not in group_map[gid]["role_ids"]:
+                        group_map[gid]["role_ids"].append(r["id"])
+                        group_map[gid]["role_names"].append(r["name"])
+
+        template = {
+            "meta": {
+                "template_name": "Сделка 2.0",
+                "source_project": project_id,
+                "source_project_id": proj["id"],
+                "exported_at": __import__("datetime").datetime.utcnow().isoformat() + "Z",
+            },
+            "project": {
+                "id": proj["id"],
+                "identifier": proj["identifier"],
+                "name": proj["name"],
+                "parent_id": proj.get("parent", {}).get("id"),
+                "is_public": proj.get("is_public", False),
+                "inherit_members": proj.get("inherit_members", False),
+                "visible_custom_fields": [cf["id"] for cf in visible_cfs],
+                "visible_custom_fields_detail": visible_cfs,
+            },
+            "trackers": [{"id": t["id"], "name": t["name"]} for t in proj.get("trackers", [])],
+            "modules": [m["name"] for m in proj.get("enabled_modules", [])],
+            "issue_custom_fields": issue_cfs,
+            "memberships": list(group_map.values()),
+            "user_memberships": [
+                {"id": m["user"]["id"], "name": m["user"]["name"], "type": "user",
+                 "role_ids": [r["id"] for r in m.get("roles", [])],
+                 "role_names": [r["name"] for r in m.get("roles", [])]}
+                for m in all_memberships if m.get("user")
+            ],
+            "versions": [{"id": v["id"], "name": v["name"], "status": v.get("status"),
+                          "due_date": v.get("due_date"), "sharing": v.get("sharing")}
+                         for v in versions],
+            "custom_menu": custom_menu,
+            "issue_templates": existing.get("issue_templates", {}),
+            "defaults": existing.get("defaults", {}),
+        }
+
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(template, f, ensure_ascii=False, indent=2)
+
+        # Generate MD
+        md_path = json_path.replace(".json", ".md")
+        lines = [
+            f"# Настройки проекта «Сделка 2.0»",
+            f"> Источник: `{project_id}` ({proj['name']})",
+            f"> Дата: {template['meta']['exported_at']}",
+            "",
+            "## Трекеры",
+            *[f"- {t['name']} (id={t['id']})" for t in template["trackers"]],
+            "",
+            "## Модули",
+            *[f"- {m}" for m in template["modules"]],
+            "",
+            f"## Группы ({len(template['memberships'])})",
+            *[f"- **{g['name']}** (id={g['id']}): {', '.join(g['role_names'])}"
+              for g in template["memberships"]],
+            "",
+            f"## Issue Custom Fields ({len(issue_cfs)})",
+            *([f"- cf_{f['id']}: {f['name']}" for f in issue_cfs] if issue_cfs
+              else ["⚠ Не удалось получить. Нужен админский API-ключ."]),
+            "",
+            f"## Custom Menu ({len(custom_menu)})",
+            *([f"- {m['position']}. {m['name']}{' → ' + m['url'] if m.get('url') else ''}"
+               for m in custom_menu] if custom_menu
+              else ["Не удалось получить через API."]),
+        ]
+        with open(md_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines))
+
+        return json.dumps({
+            "success": True,
+            "output_json": json_path,
+            "output_md": md_path,
+            "summary": {
+                "visible_project_cfs": len(visible_cfs),
+                "trackers": len(template["trackers"]),
+                "modules": len(template["modules"]),
+                "issue_custom_fields": len(issue_cfs),
+                "group_memberships": len(template["memberships"]),
+                "user_memberships": len(template["user_memberships"]),
+                "versions": len(versions),
+                "custom_menu": len(custom_menu),
+            },
+        }, ensure_ascii=False)
