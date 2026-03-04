@@ -623,144 +623,166 @@ async function loadDashboard() {
 
 // ─── Skills ───────────────────────────────────────────
 const SKILL_ICONS = {
-  mail: '📬', calendar: '📅', redmine: '📋', browser: '🌐',
-  rusprofile: '🔍', shortener: '✂️', files: '📁',
+  mail:'📬', calendar:'📅', redmine:'📋', browser:'🌐',
+  rusprofile:'🔍', shortener:'✂️', files:'📁',
 };
-function skillIcon(name) { return SKILL_ICONS[name] || '🔧'; }
+function skillIcon(n) { return SKILL_ICONS[n] || '🔧'; }
+
+function buildEnvHtml(skillName, envVars) {
+  if (!envVars || !envVars.length)
+    return '<div style="color:var(--text-muted);font-size:13px">Настройки не требуются</div>';
+  let html = '';
+  for (const v of envVars) {
+    const inputType = v.secret ? 'password' : 'text';
+    const optBadge  = v.required === false ? '<span class="env-optional">опционально</span>' : '';
+    const hint      = v.hint ? '<div class="env-hint" style="padding-left:210px">💡 ' + esc(v.hint) + '</div>' : '';
+    html += '<div>'
+      + '<div class="env-row">'
+      +   '<div class="env-key">' + esc(v.key) + '</div>'
+      +   '<div class="env-val"><input type="' + inputType + '" id="env-' + esc(skillName) + '-' + esc(v.key) + '"'
+      +     ' placeholder="' + esc(v.placeholder || '') + '" autocomplete="off"></div>'
+      +   optBadge
+      + '</div>'
+      + hint
+      + '</div>';
+  }
+  return html;
+}
+
+function buildToolsHtml(tools) {
+  if (!tools || !tools.length)
+    return '<div style="color:var(--text-muted);font-size:13px">Нет инструментов</div>';
+  return tools.map(t =>
+    '<div class="tool-row">'
+    + '<div class="tool-name">' + esc(t.name) + '</div>'
+    + '<div class="tool-desc">' + esc(t.description || '—') + '</div>'
+    + '</div>'
+  ).join('');
+}
+
+function buildSkillCard(s) {
+  const icon    = skillIcon(s.name);
+  const hasEnv  = (s.env_vars || []).length > 0;
+  const hasTools = (s.tools || []).length > 0;
+
+  const toolsHtml = buildToolsHtml(s.tools);
+  const envHtml   = buildEnvHtml(s.name, s.env_vars);
+
+  // Tabs
+  const tabs = [];
+  if (hasTools) tabs.push({ id: 'tools', label: '🔧 Инструменты (' + s.tools_count + ')' });
+  if (hasEnv)   tabs.push({ id: 'config', label: '⚙️ Настройки' });
+
+  let tabsHtml = '';
+  if (tabs.length > 1) {
+    tabsHtml = '<div class="skill-tabs">';
+    tabs.forEach(function(t, i) {
+      tabsHtml += '<div class="skill-tab' + (i === 0 ? ' active' : '') + '"'
+        + ' onclick="switchSkillTab(\'' + esc(s.name) + '\',\'' + t.id + '\')">'
+        + t.label + '</div>';
+    });
+    tabsHtml += '</div>';
+  }
+
+  let panelsHtml = '';
+  if (tabs.length > 0) {
+    tabs.forEach(function(t, i) {
+      const inner = t.id === 'tools'
+        ? toolsHtml
+        : envHtml
+          + '<div class="skill-save-btn">'
+          +   '<button class="btn btn-primary btn-sm" onclick="saveSkillConfig(\'' + esc(s.name) + '\')">💾 Сохранить</button>'
+          +   '<span class="skill-save-status" id="save-status-' + esc(s.name) + '">✓ Сохранено</span>'
+          + '</div>';
+      panelsHtml += '<div class="skill-tab-panel' + (i === 0 ? ' active' : '') + '" id="tab-' + esc(s.name) + '-' + t.id + '">'
+        + inner + '</div>';
+    });
+  } else {
+    panelsHtml = toolsHtml;
+  }
+
+  const envBadge = hasEnv ? '<span class="badge badge-yellow">⚙ env</span>' : '';
+
+  return '<div class="skill-card" id="skill-card-' + esc(s.name) + '">'
+    + '<div class="skill-card-header" onclick="toggleSkillCard(\'' + esc(s.name) + '\')">'
+    +   '<div class="skill-icon">' + icon + '</div>'
+    +   '<div class="skill-info">'
+    +     '<div class="skill-name">' + esc(s.name)
+    +       ' <span class="badge badge-gray">v' + esc(s.version) + '</span>'
+    +       ' ' + envBadge
+    +     '</div>'
+    +     '<div class="skill-desc">' + esc(s.description || '—') + '</div>'
+    +   '</div>'
+    +   '<div class="skill-meta">'
+    +     '<span class="badge badge-blue">' + s.tools_count + ' tools</span>'
+    +     '<label class="toggle" onclick="event.stopPropagation()">'
+    +       '<input type="checkbox" ' + (s.enabled ? 'checked' : '') + ' onchange="toggleSkill(\'' + esc(s.name) + '\', this.checked)">'
+    +       '<div class="toggle-track"></div>'
+    +       '<div class="toggle-thumb"></div>'
+    +     '</label>'
+    +     '<span class="skill-chevron">▼</span>'
+    +   '</div>'
+    + '</div>'
+    + '<div class="skill-body" id="skill-body-' + esc(s.name) + '">'
+    +   tabsHtml + panelsHtml
+    + '</div>'
+    + '</div>';
+}
 
 async function loadSkills() {
   const skills = await api('/skills');
   const el = document.getElementById('skillsList');
   if (!skills.length) { el.innerHTML = '<div class="empty-state">Нет загруженных скиллов</div>'; return; }
-
-  el.innerHTML = skills.map(s => {
-    const icon = skillIcon(s.name);
-    const hasEnv = (s.env_vars || []).length > 0;
-    const hasTools = (s.tools || []).length > 0;
-
-    const toolsHtml = hasTools
-      ? (s.tools || []).map(t => `
-          <div class="tool-row">
-            <div class="tool-name">${esc(t.name)}</div>
-            <div class="tool-desc">${esc(t.description || '—')}</div>
-          </div>`).join('')
-      : '<div style="color:var(--text-muted);font-size:13px">Нет инструментов</div>';
-
-    const envHtml = hasEnv
-      ? (s.env_vars || []).map(v => `
-          <div>
-            <div class="env-row">
-              <div class="env-key">${esc(v.key)}</div>
-              <div class="env-val">
-                <input type="${v.secret ? 'password' : 'text'}"
-                  id="env-${esc(s.name)}-${esc(v.key)}"
-                  placeholder="${esc(v.placeholder || '')}"
-                  autocomplete="off">
-              </div>
-              ${v.required === false ? '<span class="env-optional">опционально</span>' : ''}
-            </div>
-            ${v.hint ? `<div class="env-hint" style="padding-left:210px">💡 ${esc(v.hint)}</div>` : ''}
-          </div>`).join('')
-      : '<div style="color:var(--text-muted);font-size:13px">Настройки не требуются</div>';
-
-    const tabs = [];
-    if (hasTools) tabs.push({ id: 'tools', label: `🔧 Инструменты (${s.tools_count})` });
-    if (hasEnv)   tabs.push({ id: 'config', label: '⚙️ Настройки' });
-
-    const tabsHtml = tabs.length > 1
-      ? `<div class="skill-tabs">${tabs.map((t, i) => `<div class="skill-tab${i===0?' active':''}" onclick="switchSkillTab('${esc(s.name)}','${t.id}')">${t.label}</div>`).join('')}</div>`
-      : '';
-
-    const panelsHtml = tabs.map((t, i) => `
-      <div class="skill-tab-panel${i===0?' active':''}" id="tab-${esc(s.name)}-${t.id}">
-        ${t.id === 'tools' ? toolsHtml : ''}
-        ${t.id === 'config' ? `
-          ${envHtml}
-          <div class="skill-save-btn">
-            <button class="btn btn-primary btn-sm" onclick="saveSkillConfig('${esc(s.name)}')">💾 Сохранить</button>
-            <span class="skill-save-status" id="save-status-${esc(s.name)}">✓ Сохранено</span>
-          </div>
-        ` : ''}
-      </div>`).join('');
-
-    return `
-    <div class="skill-card" id="skill-card-${esc(s.name)}">
-      <div class="skill-card-header" onclick="toggleSkillCard('${esc(s.name)}')">
-        <div class="skill-icon">${icon}</div>
-        <div class="skill-info">
-          <div class="skill-name">
-            ${esc(s.name)}
-            <span class="badge badge-gray">v${esc(s.version)}</span>
-            ${hasEnv ? '<span class="badge badge-yellow">⚙ env</span>' : ''}
-          </div>
-          <div class="skill-desc">${esc(s.description || '—')}</div>
-        </div>
-        <div class="skill-meta">
-          <span class="badge badge-blue">${s.tools_count} tools</span>
-          <label class="toggle" onclick="event.stopPropagation()">
-            <input type="checkbox" ${s.enabled ? 'checked' : ''} onchange="toggleSkill('${esc(s.name)}', this.checked)">
-            <div class="toggle-track"></div>
-            <div class="toggle-thumb"></div>
-          </label>
-          <span class="skill-chevron">▼</span>
-        </div>
-      </div>
-      <div class="skill-body" id="skill-body-${esc(s.name)}">
-        ${tabsHtml}
-        ${tabs.length > 0 ? panelsHtml : toolsHtml}
-      </div>
-    </div>`;
-  }).join('');
-
+  el.innerHTML = skills.map(buildSkillCard).join('');
   for (const s of skills) {
     if ((s.env_vars || []).length > 0) loadSkillConfig(s.name, s.env_vars);
   }
 }
 
 function toggleSkillCard(name) {
-  document.getElementById(`skill-card-${name}`).classList.toggle('open');
+  document.getElementById('skill-card-' + name).classList.toggle('open');
 }
 
 function switchSkillTab(skillName, tabId) {
-  const body = document.getElementById(`skill-body-${skillName}`);
-  body.querySelectorAll('.skill-tab').forEach(t => {
-    const tId = t.getAttribute('onclick').match(/'([^']+)'\)$/)?.[1];
-    t.classList.toggle('active', tId === tabId);
+  const body = document.getElementById('skill-body-' + skillName);
+  body.querySelectorAll('.skill-tab').forEach(function(t) {
+    const m = t.getAttribute('onclick').match(/'([^']+)'\)$/);
+    if (m) t.classList.toggle('active', m[1] === tabId);
   });
-  body.querySelectorAll('.skill-tab-panel').forEach(p => {
-    p.classList.toggle('active', p.id === `tab-${skillName}-${tabId}`);
+  body.querySelectorAll('.skill-tab-panel').forEach(function(p) {
+    p.classList.toggle('active', p.id === 'tab-' + skillName + '-' + tabId);
   });
 }
 
 async function loadSkillConfig(name, envVars) {
   try {
-    const cfg = await api(`/skills/${name}/config`);
+    const cfg = await api('/skills/' + name + '/config');
     const config = cfg.config || {};
     for (const v of envVars) {
-      const input = document.getElementById(`env-${name}-${v.key}`);
+      const input = document.getElementById('env-' + name + '-' + v.key);
       if (input && config[v.key]) input.value = config[v.key];
     }
-  } catch (e) {}
+  } catch(e) {}
 }
 
 async function saveSkillConfig(name) {
-  const card = document.getElementById(`skill-card-${name}`);
+  const card = document.getElementById('skill-card-' + name);
   const inputs = card.querySelectorAll('input[id^="env-"]');
   const config = {};
-  inputs.forEach(inp => {
-    const key = inp.id.replace(`env-${name}-`, '');
+  inputs.forEach(function(inp) {
+    const key = inp.id.replace('env-' + name + '-', '');
     if (inp.value.trim()) config[key] = inp.value.trim();
   });
   try {
-    await api(`/skills/${name}/config`, { method: 'PUT', body: JSON.stringify({ config }) });
-    const status = document.getElementById(`save-status-${name}`);
+    await api('/skills/' + name + '/config', { method: 'PUT', body: JSON.stringify({ config: config }) });
+    const status = document.getElementById('save-status-' + name);
     status.style.display = 'inline';
-    setTimeout(() => { status.style.display = 'none'; }, 2500);
-  } catch (e) { alert('Ошибка сохранения: ' + e.message); }
+    setTimeout(function() { status.style.display = 'none'; }, 2500);
+  } catch(e) { alert('Ошибка: ' + e.message); }
 }
 
 async function toggleSkill(name, enabled) {
-  await api(`/skills/${name}/toggle`, { method: 'POST', body: JSON.stringify({ enabled }) });
+  await api('/skills/' + name + '/toggle', { method: 'POST', body: JSON.stringify({ enabled: enabled }) });
 }
 
 // ─── Users ────────────────────────────────────────────
@@ -912,4 +934,5 @@ checkAuth();
 </script>
 </body>
 </html>
+
 
