@@ -122,6 +122,23 @@ class BrowserSkill(BaseSkill):
                     "url": {"type": "string"},
                 }, "required": ["url"],
             }),
+            LLMTool("browser.click_shot", "Combo: кликнуть по селектору + скриншот", {
+                "type": "object", "properties": {
+                    "selector": {"type": "string", "description": "CSS-селектор элемента для клика"},
+                }, "required": ["selector"],
+            }),
+            LLMTool("browser.wait", "Ждать появления элемента на странице", {
+                "type": "object", "properties": {
+                    "selector": {"type": "string", "description": "CSS-селектор"},
+                    "timeout": {"type": "integer", "default": 10000, "description": "Таймаут мс"},
+                }, "required": ["selector"],
+            }),
+            LLMTool("browser.url", "Получить текущий URL страницы", {
+                "type": "object", "properties": {},
+            }),
+            LLMTool("browser.cookies", "Получить все cookies текущей сессии", {
+                "type": "object", "properties": {},
+            }),
         ]
 
     async def execute(self, tool_name: str, params: dict) -> str:
@@ -135,6 +152,8 @@ class BrowserSkill(BaseSkill):
             "inputs": self._inputs, "scroll": self._scroll,
             "press": self._press, "eval": self._eval,
             "login": self._login, "nav_shot": self._nav_shot,
+            "click_shot": self._click_shot, "wait": self._wait,
+            "url": self._url, "cookies": self._cookies,
         }
         fn = dispatch.get(cmd)
         if not fn:
@@ -383,3 +402,37 @@ class BrowserSkill(BaseSkill):
                 "title": await page.title(), "screenshot": self._screenshot_file,
             }
         return json.dumps(await self._with_page(action), ensure_ascii=False)
+
+    async def _click_shot(self, p: dict) -> str:
+        async def action(page, ctx):
+            await page.click(p["selector"], timeout=10000)
+            await page.wait_for_load_state("domcontentloaded", timeout=10000)
+            await page.screenshot(path=self._screenshot_file, type="png", full_page=False)
+            return {
+                "success": True, "url": page.url,
+                "title": await page.title(), "screenshot": self._screenshot_file,
+            }
+        return json.dumps(await self._with_page(action, needs_last_url=True), ensure_ascii=False)
+
+    async def _wait(self, p: dict) -> str:
+        timeout = int(p.get("timeout") or 10000)
+        async def action(page, ctx):
+            try:
+                await page.wait_for_selector(p["selector"], timeout=timeout)
+                return {"success": True, "found": p["selector"]}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+        return json.dumps(await self._with_page(action, needs_last_url=True), ensure_ascii=False)
+
+    async def _url(self, p: dict) -> str:
+        async def action(page, ctx):
+            return {"url": page.url, "title": await page.title()}
+        return json.dumps(await self._with_page(action, needs_last_url=True), ensure_ascii=False)
+
+    async def _cookies(self, p: dict) -> str:
+        async def action(page, ctx):
+            cookies = await ctx.cookies()
+            return [{"name": c["name"], "value": c["value"],
+                     "domain": c.get("domain", ""), "path": c.get("path", "/")}
+                    for c in cookies]
+        return json.dumps(await self._with_page(action, needs_last_url=True), ensure_ascii=False)
