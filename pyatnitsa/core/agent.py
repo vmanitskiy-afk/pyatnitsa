@@ -19,30 +19,19 @@ from pyatnitsa.memory.conversations import ConversationStore
 logger = structlog.get_logger()
 
 SYSTEM_PROMPT = """Ты - Пятница, персональный AI-ассистент для бизнеса.
-Ты помогаешь пользователю управлять задачами, проектами и бизнес-процессами.
+Ты помогаешь управлять задачами, проектами, почтой, календарём и бизнес-процессами.
 
 Правила:
-- Отвечай на русском языке
-- Будь кратким и по делу
-- ВСЕГДА используй доступные инструменты (functions) когда пользователь просит что-то сделать
-- Если не знаешь ответ - скажи об этом, не выдумывай
+- Отвечай на русском языке, кратко и по делу
+- ВСЕГДА вызывай инструменты (functions) когда пользователь просит что-то сделать — не отказывай и не выдумывай
 - Запоминай важные факты о пользователе для будущих разговоров
-
-ВАЖНО — работа с файлами:
-- У тебя ЕСТЬ рабочая папка с файлами пользователя. Ты МОЖЕШЬ читать и создавать файлы.
-- Когда пользователь упоминает файлы, папки, документы — СРАЗУ вызывай нужный инструмент:
-  * "покажи файлы" / "что в папке" → вызови files.list или files.tree
-  * "прочитай файл" → вызови files.read, files.read_excel, files.read_pdf или files.read_docx
-  * "создай файл" → вызови files.write или files.write_csv
-  * "найди в файлах" → вызови files.search
-- НЕ отказывай, НЕ говори что не можешь — ВЫЗЫВАЙ инструмент
 - Когда пользователь прикрепляет файлы, информация о них в блоках [File: name | path: /abs/path]
 
 {memory_context}
 
 {summary_context}
 
-Доступные навыки:
+Доступные навыки и инструменты:
 {skills_context}
 """
 
@@ -136,9 +125,11 @@ class Agent:
         tools = self.skills.get_all_tools()
         logger.info("agent_tools_available", count=len(tools),
                      names=[t.name for t in tools[:5]])
-        skills_desc = "\n".join(
-            f"- {s.name}: {s.description}" for s in self.skills.skills.values()
-        )
+        skills_desc_parts = []
+        for s in self.skills.skills.values():
+            tool_names = ", ".join(t.name for t in s.get_tools())
+            skills_desc_parts.append(f"• {s.name}: {s.description}\n  Инструменты: {tool_names}")
+        skills_desc = "\n\n".join(skills_desc_parts)
 
         summary, llm_messages = await conv.build_llm_messages(chat.id)
         summary_block = f"Резюме предыдущей части разговора:\n{summary}" if summary else ""
@@ -339,7 +330,7 @@ class Agent:
         user_id = message.user_id
         memory_context = await self.memory.build_context(user_id)
         tools = self.skills.get_all_tools()
-        skills_desc = "\n".join(f"- {s.name}: {s.description}" for s in self.skills.skills.values())
+        skills_desc = "\n".join(f"• {s.name}: {s.description}" for s in self.skills.skills.values())
         system = SYSTEM_PROMPT.format(
             memory_context=memory_context or "Пока ничего не известно.",
             summary_context="", skills_context=skills_desc or "Навыки не загружены.",
@@ -354,3 +345,4 @@ class Agent:
         if llm_response.text and "SKIP" not in llm_response.text.upper():
             return Response(text=llm_response.text)
         return None
+
