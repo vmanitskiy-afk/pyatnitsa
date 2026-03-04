@@ -238,15 +238,9 @@ class MaxChannel(BaseChannel):
             raw={"sender_name": sender_name},
         )
         await self._dispatch(msg)
-        
-        logger.info("max_channel_starting", polling=self.use_polling)
-        
-        if self.use_polling:
-            await self._dp.start_polling(self._bot)
-    
+
     async def stop(self):
-        if self._dp:
-            await self._dp.stop_polling()
+        pass  # aiohttp session закроется сама
     
     async def send(self, chat_id: str, response: Response):
         if not self._bot:
