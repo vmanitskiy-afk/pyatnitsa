@@ -71,7 +71,7 @@ class MaxChannel(BaseChannel):
         self.use_polling = use_polling
         self._bot = None
         self._dp = None
-        self._seen_mids: set[str] = set()  # дедупликация
+        self._seen_mids: dict[str, float] = {}  # дедупликация: hash -> timestamp
     
     async def start(self):
         """Запускает MAX бот через polling или webhook."""
@@ -108,11 +108,18 @@ class MaxChannel(BaseChannel):
             user_id = str(m.sender.user_id) if m.sender else "unknown"
 
             # Дедупликация — MAX polling может доставить одно сообщение несколько раз
-            if mid in self._seen_mids:
+            # mid может отличаться, поэтому дедуплицируем по user + содержимое + время
+            import hashlib, time as _time
+            att_count = len(m.body.attachments or [])
+            dedup_key = f"{user_id}:{text or ''}:{att_count}"
+            dedup_hash = hashlib.md5(dedup_key.encode()).hexdigest()[:16]
+            now = _time.time()
+            # Чистим старые записи (>30s)
+            self._seen_mids = {k: v for k, v in self._seen_mids.items() if now - v < 30}
+            if dedup_hash in self._seen_mids:
+                logger.debug("max_dedup_skip", mid=mid, user_id=user_id)
                 return
-            self._seen_mids.add(mid)
-            if len(self._seen_mids) > 500:
-                self._seen_mids = set(list(self._seen_mids)[-250:])
+            self._seen_mids[dedup_hash] = now
 
             # Кеш bot info
             if self._bot_username is None:

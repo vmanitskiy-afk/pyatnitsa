@@ -180,21 +180,28 @@ class GigaChatProvider(LLMProvider):
                                 src = block.get("source", {})
                                 img_data = b64mod.b64decode(src.get("data", ""))
                                 mime = src.get("media_type", "image/jpeg")
+                                logger.info("gigachat_image_prep", original_mime=mime, data_len=len(img_data))
                                 # GigaChat капризен к формату — прогоняем через PIL для валидности
+                                converted = False
                                 try:
                                     from PIL import Image as PILImage
                                     import io
                                     pil_img = PILImage.open(io.BytesIO(img_data))
+                                    logger.info("pil_image_opened", format=pil_img.format, mode=pil_img.mode, size=pil_img.size)
                                     if pil_img.mode in ("RGBA", "LA", "P"):
                                         pil_img = pil_img.convert("RGB")
                                     buf = io.BytesIO()
                                     pil_img.save(buf, format="JPEG", quality=85)
                                     img_data = buf.getvalue()
                                     mime = "image/jpeg"
+                                    converted = True
                                 except ImportError:
                                     logger.warning("pillow_not_installed", hint="pip install Pillow")
                                 except Exception as conv_err:
-                                    logger.warning("image_convert_err", error=str(conv_err)[:100])
+                                    logger.warning("image_convert_err", error=str(conv_err)[:200], original_mime=mime)
+                                if not converted and mime not in ("image/jpeg", "image/png", "image/gif"):
+                                    text_parts.append("[Картинка — формат не поддерживается GigaChat]")
+                                    continue
                                 uploaded = None
                                 for _upl_attempt in range(3):
                                     try:
@@ -212,7 +219,7 @@ class GigaChatProvider(LLMProvider):
                                 image_ids.append(uploaded.id_)
                                 logger.info("gigachat_image_uploaded", file_id=uploaded.id_)
                             except Exception as e:
-                                logger.warning("gigachat_image_upload_err", error=str(e))
+                                logger.warning("gigachat_image_upload_err", error=str(e)[:200])
                                 text_parts.append("[Картинка — не удалось загрузить]")
                         elif block.get("type") == "tool_use":
                             pass
