@@ -144,12 +144,54 @@ class MaxChannel(BaseChannel):
                 if ln:
                     sender_name = f"{sender_name} {ln}".strip()
 
+            # Скачиваем вложения (картинки, файлы)
+            from pyatnitsa.core.models import Attachment
+            attachments = []
+            for att in (m.body.attachments or []):
+                try:
+                    att_type_str = getattr(att, "type", None) or ""
+                    payload = getattr(att, "payload", None)
+                    if not payload:
+                        continue
+                    url = getattr(payload, "url", None)
+                    token = getattr(payload, "token", None)
+                    if not url:
+                        continue
+
+                    # Скачиваем файл по url+token
+                    import httpx
+                    headers = {}
+                    download_url = url
+                    if token:
+                        download_url = f"{url}?token={token}" if "?" not in url else f"{url}&token={token}"
+                    async with httpx.AsyncClient(timeout=30) as client:
+                        resp = await client.get(download_url, headers=headers)
+                        if resp.status_code != 200:
+                            logger.warning("max_download_failed", url=url[:80], status=resp.status_code)
+                            continue
+                        data = resp.content
+                        content_type = resp.headers.get("content-type", "")
+
+                    fname = getattr(att, "filename", None) or "file"
+                    if att_type_str in ("image", "IMAGE"):
+                        mime = content_type.split(";")[0].strip() if content_type else "image/jpeg"
+                        if not fname or fname == "file":
+                            ext = mime.split("/")[-1] if "/" in mime else "jpg"
+                            fname = f"image.{ext}"
+                        attachments.append(Attachment(type="image", data=data, filename=fname, mime_type=mime))
+                    else:
+                        mime = content_type.split(";")[0].strip() if content_type else None
+                        attachments.append(Attachment(type="file", data=data, filename=fname, mime_type=mime))
+                except Exception as e:
+                    logger.warning("max_attachment_error", error=str(e)[:120])
+
             msg = Message(
                 id=mid,
                 channel=self.name,
                 user_id=user_id,
                 chat_id=chat_id,
                 text=clean_text,
+                attachments=attachments,
                 listen_only=not addressed,
                 role=MessageRole.USER,
                 raw={"sender_name": sender_name},

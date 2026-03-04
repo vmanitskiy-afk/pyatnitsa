@@ -129,10 +129,19 @@ class Agent:
         history = [LLMMessage(role=m["role"], content=m["content"]) for m in llm_messages]
 
         # Инжектируем файловый контент в последнее сообщение (только для LLM!)
-        if file_context and history:
+        # Для картинок НЕ добавляем текстовые метки — они пойдут как image-блоки
+        if file_context and history and not images:
             last = history[-1]
             if last.role == "user" and isinstance(last.content, str):
                 last.content = f"{last.content}\n\n{file_context}"
+        elif file_context and history and images:
+            # Есть и картинки, и другие файлы — инжектируем только не-image часть
+            non_image_parts = [p for p in file_context.split("\n\n") if not p.startswith("[Image:")]
+            if non_image_parts:
+                extra = "\n\n".join(non_image_parts)
+                last = history[-1]
+                if last.role == "user" and isinstance(last.content, str):
+                    last.content = f"{last.content}\n\n{extra}"
 
         # Если есть картинки — делаем мультимодальное сообщение
         if images:
