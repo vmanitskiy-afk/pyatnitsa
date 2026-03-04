@@ -117,6 +117,7 @@ async def run():
         "integrations.onec_base_url": "ONEC_BASE_URL",
         "integrations.onec_username": "ONEC_USERNAME",
         "integrations.onec_password": "ONEC_PASSWORD",
+        "files.workspace": "FILES_WORKSPACE",
     }
     for _sk, _ek in _int_map.items():
         _v = await settings_store.get(_sk)

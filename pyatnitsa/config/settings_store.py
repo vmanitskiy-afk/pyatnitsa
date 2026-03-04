@@ -48,6 +48,8 @@ DEFAULTS = {
     "system.log_level": "INFO",
     "system.heartbeat_enabled": "true",
     "system.heartbeat_interval": "5",
+    # Files
+    "files.workspace": "",
 }
 
 # Поля с секретами — маскируются при отдаче
