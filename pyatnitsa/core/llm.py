@@ -180,10 +180,24 @@ class GigaChatProvider(LLMProvider):
                                 src = block.get("source", {})
                                 img_data = b64mod.b64decode(src.get("data", ""))
                                 mime = src.get("media_type", "image/jpeg")
-                                ext = mime.split("/")[-1] if "/" in mime else "jpg"
+                                # GigaChat капризен к формату — прогоняем через PIL для валидности
+                                try:
+                                    from PIL import Image as PILImage
+                                    import io
+                                    pil_img = PILImage.open(io.BytesIO(img_data))
+                                    if pil_img.mode in ("RGBA", "LA", "P"):
+                                        pil_img = pil_img.convert("RGB")
+                                    buf = io.BytesIO()
+                                    pil_img.save(buf, format="JPEG", quality=85)
+                                    img_data = buf.getvalue()
+                                    mime = "image/jpeg"
+                                except ImportError:
+                                    logger.warning("pillow_not_installed", hint="pip install Pillow")
+                                except Exception as conv_err:
+                                    logger.warning("image_convert_err", error=str(conv_err)[:100])
                                 uploaded = await asyncio.get_event_loop().run_in_executor(
                                     None, self.client.upload_file,
-                                    (f"image.{ext}", img_data, mime)
+                                    (f"image.jpg", img_data, mime)
                                 )
                                 image_ids.append(uploaded.id_)
                                 logger.info("gigachat_image_uploaded", file_id=uploaded.id_)
