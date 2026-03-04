@@ -89,6 +89,8 @@ class MaxChannel(BaseChannel):
         
         # ── Фикс бага MAX SDK: get_updates не передаёт marker ──
         # Без marker API возвращает одни и те же события при каждом poll.
+        # Дополнительно: дедупликация events по mid (в рамках одного poll и между polls).
+        _seen_mids: set[str] = set()
         _orig_fetch = GetUpdates.fetch
         async def _patched_fetch(self_gu):
             params = self_gu.bot.params.copy()
@@ -106,6 +108,29 @@ class MaxChannel(BaseChannel):
                 params=params,
                 is_return_raw=True,
             )
+            updates = event_json.get('updates', [])
+            if updates:
+                logger.info("max_poll_raw", count=len(updates), marker=params.get('marker'),
+                            new_marker=event_json.get('marker'))
+                # Дедупликация по mid — и внутри батча, и между poll-циклами
+                deduped = []
+                for u in updates:
+                    mid = None
+                    try:
+                        mid = u.get('message', {}).get('body', {}).get('mid')
+                    except Exception:
+                        pass
+                    if mid and mid in _seen_mids:
+                        continue
+                    if mid:
+                        _seen_mids.add(mid)
+                    deduped.append(u)
+                # Ограничиваем размер кеша
+                if len(_seen_mids) > 1000:
+                    _seen_mids.clear()
+                if len(deduped) < len(updates):
+                    logger.info("max_poll_deduped", before=len(updates), after=len(deduped))
+                event_json['updates'] = deduped
             return event_json
         GetUpdates.fetch = _patched_fetch
         logger.info("max_sdk_marker_fix_applied")
