@@ -688,6 +688,19 @@ class RedmineSkill(BaseSkill):
                     "output": {"type": "string", "description": "Путь для сохранения JSON (опционально)"},
                 }, "required": ["project"],
             }),
+            LLMTool("redmine.create_contact_from_inn",
+                "Создать контрагента (Easy Contact) в EasyRedmine по ИНН. "
+                "Ищет существующий контакт, при отсутствии — получает данные из Rusprofile и создаёт новый.", {
+                "type": "object", "properties": {
+                    "inn": {"type": "string", "description": "ИНН организации (10 цифр) или ИП (12 цифр)"},
+                    "region": {"type": "string", "description": "Регион для сокращения названия (опционально)"},
+                }, "required": ["inn"],
+            }),
+            LLMTool("redmine.discover_contact_fields",
+                "Обнаружить поля формы Easy Contact через Playwright (для диагностики маппинга CF). "
+                "Требует RDM_LOGIN и RDM_PASSWORD.", {
+                "type": "object", "properties": {},
+            }),
         ]
 
     # ═══════════════════════════════════════════════════════
@@ -715,6 +728,8 @@ class RedmineSkill(BaseSkill):
                 "trackers": self._list_trackers,
                 "set_group_roles": self._set_group_roles,
                 "update_deal_template": self._update_deal_template,
+                "create_contact_from_inn": self._create_contact_from_inn,
+                "discover_contact_fields": self._discover_contact_fields,
             }.get(action)
             if not handler:
                 return json.dumps({"error": f"Неизвестное действие: {action}"}, ensure_ascii=False)
@@ -1869,3 +1884,325 @@ class RedmineSkill(BaseSkill):
                 "custom_menu": len(custom_menu),
             },
         }, ensure_ascii=False)
+
+
+    # ── EC_CF / EC_TYPE constants ────────────────────────
+    # Easy Contact custom field IDs (update via redmine.discover_contact_fields)
+    _EC_CF = {
+        "INN": 6, "ORG_NAME": 2, "ADDRESS": 5, "PHONE": 4, "EMAIL": 8,
+        "KPP": 29, "OGRN": 34, "BIK": 30, "BANK": 33, "RS": 31, "KS": 32,
+        "POSITION": 107,
+    }
+    _EC_TYPE = {
+        "PERSON": 1, "ORGANIZATION": 2, "IP": 3,
+        "SUBDIVISION": 4, "EMPLOYEE": 6,
+    }
+
+    # ── create_contact_from_inn ──────────────────────────
+
+    async def _create_contact_from_inn(self, p: dict) -> str:
+        import re as _re
+        raw_inn = _re.sub(r"[^\d]", "", p.get("inn") or "")
+
+        if not _re.match(r"^\d{10}(\d{2})?$", raw_inn):
+            return json.dumps({
+                "success": False, "error": "invalid_inn",
+                "input": p.get("inn", ""),
+                "message": "ИНН должен содержать 10 или 12 цифр",
+            }, ensure_ascii=False)
+
+        # Step 1: search existing contact by INN
+        existing = []
+        for params in [
+            {"limit": 100, "cf_6": raw_inn},
+            {"limit": 100, "easy_query_q": raw_inn},
+            {"limit": 100, "search": raw_inn},
+        ]:
+            try:
+                d = await self._api_safe("GET", "/easy_contacts.json", params=params)
+                existing = d.get("easy_contacts") or d.get("contacts") or []
+                if existing:
+                    break
+            except Exception:
+                continue
+
+        # Filter exact INN match
+        inn_cf_id = self._EC_CF["INN"]
+        matches = [
+            c for c in existing
+            if any(
+                str(cf.get("value", "")).replace(" ", "") == raw_inn
+                for cf in (c.get("custom_fields") or [])
+                if cf.get("id") == inn_cf_id
+            )
+        ]
+
+        if matches:
+            c = matches[0]
+            def get_cf(cf_id):
+                return next((cf["value"] for cf in (c.get("custom_fields") or [])
+                             if cf.get("id") == cf_id), None)
+            org = get_cf(self._EC_CF["ORG_NAME"]) or c.get("lastname") or c.get("name") or f"#{c['id']}"
+            contact = {
+                "id": c["id"], "type": c.get("type_name"),
+                "name": org, "full_name": org,
+                "inn": get_cf(self._EC_CF["INN"]),
+                "kpp": get_cf(self._EC_CF["KPP"]),
+                "ogrn": get_cf(self._EC_CF["OGRN"]),
+                "address": get_cf(self._EC_CF["ADDRESS"]),
+                "manager": {"position": get_cf(self._EC_CF["POSITION"]), "name": None},
+            }
+            return json.dumps({
+                "success": True, "source": "existing",
+                "contact_url": f"{self.base_url}/easy_contacts/{c['id']}",
+                "contact": contact,
+                **({"warning": f"Found {len(matches)} contacts with this INN, returning first"} if len(matches) > 1 else {}),
+            }, ensure_ascii=False)
+
+        # Step 2: rusprofile lookup via rusprofile skill
+        from pyatnitsa.skills.skills import SkillLoader as _SL
+        rp_result = None
+        try:
+            # Try to find rusprofile skill in same loader
+            import importlib, pathlib
+            skills_dir = pathlib.Path(__file__).parent.parent
+            rp_path = skills_dir / "rusprofile" / "rusprofile.py"
+            if rp_path.exists():
+                spec = importlib.util.spec_from_file_location("rusprofile_skill", str(rp_path))
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+                rp_skill = mod.RusprofileSkill()
+                await rp_skill.on_load()
+                rp_raw = await rp_skill.execute("rusprofile.lookup", {"inn": raw_inn})
+                rp_result = json.loads(rp_raw)
+        except Exception as e:
+            return json.dumps({
+                "success": False, "error": "rusprofile_error",
+                "inn": raw_inn,
+                "message": f"Ошибка обращения к Rusprofile: {str(e)[:150]}",
+            }, ensure_ascii=False)
+
+        if not rp_result or not rp_result.get("success") or not rp_result.get("company"):
+            return json.dumps({
+                "success": False, "error": "rusprofile_not_found",
+                "inn": raw_inn,
+                "message": f"Организация с ИНН {raw_inn} не найдена в Rusprofile",
+                "details": rp_result.get("error") if rp_result else None,
+            }, ensure_ascii=False)
+
+        company = rp_result["company"]
+
+        # Step 3: shorten org name via shortener skill
+        short_name = company.get("short_name") or company.get("full_name", "")
+        try:
+            sh_path = pathlib.Path(__file__).parent.parent / "shortener" / "shortener.py"
+            if sh_path.exists():
+                spec = importlib.util.spec_from_file_location("shortener_skill", str(sh_path))
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+                sh_skill = mod.ShortenerSkill()
+                await sh_skill.on_load()
+                sh_raw = await sh_skill.execute("shortener.shorten", {
+                    "full_name": company.get("full_name", short_name),
+                    "region": p.get("region"),
+                })
+                sh_result = json.loads(sh_raw)
+                if sh_result.get("result"):
+                    short_name = sh_result["result"]
+        except Exception:
+            pass
+
+        # Step 4: determine contact type
+        full_name = company.get("full_name", "")
+        is_ip = (company.get("opf_type") == "ip" or
+                 "ИНДИВИДУАЛЬНЫЙ ПРЕДПРИНИМАТЕЛЬ" in full_name.upper())
+        type_id = self._EC_TYPE["IP"] if is_ip else self._EC_TYPE["ORGANIZATION"]
+        type_name = "ИП" if is_ip else "Организация"
+
+        # Step 5: build custom fields
+        custom_fields = []
+        filled = []
+        skipped = []
+
+        def add_cf(cf_id, value, field_name):
+            if value and str(value).strip():
+                custom_fields.append({"id": cf_id, "value": str(value).strip()})
+                filled.append(field_name)
+            else:
+                skipped.append(field_name)
+
+        add_cf(self._EC_CF["INN"], raw_inn, "inn")
+        add_cf(self._EC_CF["ORG_NAME"], full_name, "full_name")
+        add_cf(self._EC_CF["ADDRESS"], company.get("address"), "address")
+        add_cf(self._EC_CF["POSITION"], (company.get("manager") or {}).get("position"), "manager.position")
+        add_cf(self._EC_CF["PHONE"], ((company.get("contacts") or {}).get("phone") or [None])[0], "phone")
+        if not is_ip and company.get("kpp"):
+            add_cf(self._EC_CF["KPP"], str(company["kpp"]).replace(r"\D", ""), "kpp")
+        else:
+            skipped.append("kpp")
+        if company.get("ogrn"):
+            add_cf(self._EC_CF["OGRN"], str(company["ogrn"]), "ogrn")
+        else:
+            skipped.append("ogrn")
+
+        # author_note for fields without dedicated CF
+        note_lines = []
+        if full_name:
+            note_lines.append(f"Полное наименование: {full_name}")
+        mgr_name = (company.get("manager") or {}).get("name")
+        if mgr_name:
+            note_lines.append(f"Руководитель: {mgr_name}")
+        website = (company.get("contacts") or {}).get("website")
+        if website:
+            note_lines.append(f"Сайт: {website}")
+        if company.get("rusprofile_url"):
+            note_lines.append(f"Rusprofile: {company['rusprofile_url']}")
+
+        payload = {
+            "easy_contact": {
+                "type_id": type_id,
+                "firstname": short_name,
+                "lastname": " ",
+                "custom_fields": custom_fields,
+                **({"author_note": "\n".join(note_lines)} if note_lines else {}),
+            }
+        }
+
+        try:
+            new_contact = await self._api_safe("POST", "/easy_contacts.json", payload)
+        except Exception as e:
+            return json.dumps({
+                "success": False, "error": "redmine_api_error",
+                "inn": raw_inn, "company_name": full_name,
+                "message": f"Ошибка создания контакта: {str(e)[:200]}",
+                "hint": "Проверьте маппинг полей через redmine.discover_contact_fields",
+            }, ensure_ascii=False)
+
+        contact_id = (
+            (new_contact.get("easy_contact") or {}).get("id") or
+            (new_contact.get("contact") or {}).get("id") or
+            new_contact.get("id")
+        )
+        if not contact_id:
+            return json.dumps({
+                "success": False, "error": "no_contact_id",
+                "inn": raw_inn,
+                "message": "Контакт создан, но ID не получен из ответа API",
+                "raw_response": new_contact,
+            }, ensure_ascii=False)
+
+        return json.dumps({
+            "success": True, "source": "created",
+            "contact_url": f"{self.base_url}/easy_contacts/{contact_id}",
+            "contact": {
+                "id": contact_id, "type": type_name,
+                "name": short_name, "full_name": full_name,
+                "inn": raw_inn,
+                "kpp": company.get("kpp"),
+                "ogrn": company.get("ogrn"),
+                "address": company.get("address"),
+                "manager": {
+                    "position": (company.get("manager") or {}).get("position"),
+                    "name": (company.get("manager") or {}).get("name"),
+                },
+                "rusprofile_url": company.get("rusprofile_url"),
+            },
+            "filled_fields": filled,
+            "skipped_fields": skipped,
+        }, ensure_ascii=False)
+
+    # ── discover_contact_fields ──────────────────────────
+
+    async def _discover_contact_fields(self, p: dict) -> str:
+        """Обнаружить поля формы Easy Contact через Playwright."""
+        rdm_login = __import__("os").getenv("RDM_LOGIN", "")
+        rdm_password = __import__("os").getenv("RDM_PASSWORD", "")
+
+        if not rdm_login or not rdm_password:
+            return json.dumps({
+                "success": False, "error": "no_credentials",
+                "message": "Требуются RDM_LOGIN и RDM_PASSWORD в .env",
+            }, ensure_ascii=False)
+
+        try:
+            from playwright.async_api import async_playwright
+        except ImportError:
+            return json.dumps({
+                "success": False, "error": "playwright_not_installed",
+                "message": "pip install playwright && playwright install chromium",
+            }, ensure_ascii=False)
+
+        try:
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(headless=True)
+                page = await browser.new_page()
+
+                await page.goto(f"{self.base_url}/login")
+                await page.wait_for_load_state("domcontentloaded")
+                await page.fill("#username", rdm_login)
+                await page.fill("#password", rdm_password)
+                await page.click("button[type='submit']")
+                await page.wait_for_load_state("networkidle")
+                await page.wait_for_timeout(2000)
+
+                fields = []
+                type_options = []
+                for url in [f"{self.base_url}/easy_contacts/new"]:
+                    await page.goto(url, wait_until="domcontentloaded")
+                    await page.wait_for_timeout(2000)
+
+                    fields = await page.evaluate("""() => {
+                        const results = [];
+                        document.querySelectorAll('input, select, textarea').forEach(el => {
+                            const name = el.getAttribute('name') || '';
+                            const id = el.getAttribute('id') || '';
+                            if (!name || name.includes('[_destroy]') || name === 'utf8' || name === 'authenticity_token') return;
+                            const label = el.closest('label, .attribute, p, tr')?.textContent?.trim()?.substring(0, 80) || '';
+                            results.push({
+                                name, id: id || null,
+                                type: el.tagName.toLowerCase() + (el.type ? ':' + el.type : ''),
+                                label: label.split('\\n')[0]?.trim()?.substring(0, 80) || null,
+                                options: el.tagName === 'SELECT'
+                                    ? Array.from(el.options).filter(o => o.value).map(o => ({value: o.value, text: o.textContent.trim()})).slice(0, 20)
+                                    : null,
+                            });
+                        });
+                        document.querySelectorAll('[name*=\"custom_field_values\"]').forEach(el => {
+                            const m = el.getAttribute('name')?.match(/\\[(\\d+)\\]/);
+                            if (m && !results.some(r => r.name === el.getAttribute('name'))) {
+                                const label = el.closest('p, div, tr')?.querySelector('label')?.textContent?.trim() || '';
+                                results.push({ name: el.getAttribute('name'), cf_id: parseInt(m[1]),
+                                    type: el.tagName.toLowerCase() + (el.type ? ':' + el.type : ''),
+                                    label: label.substring(0, 80) || 'cf_' + m[1] });
+                            }
+                        });
+                        return results;
+                    }""")
+
+                    try:
+                        type_options = await page.evaluate("""() => {
+                            const sel = document.querySelector('select[name*="type"], select[name*="contact_type"]');
+                            if (!sel) return [];
+                            return Array.from(sel.options).filter(o => o.value).map(o => ({value: o.value, text: o.textContent.trim()}));
+                        }""")
+                    except Exception:
+                        pass
+
+                    if fields:
+                        break
+
+                await browser.close()
+
+                return json.dumps({
+                    "success": True,
+                    "total_fields": len(fields),
+                    "type_options": type_options,
+                    "fields": fields,
+                    "hint": "Используй cf_id для обновления _EC_CF в redmine.py",
+                }, ensure_ascii=False)
+
+        except Exception as e:
+            return json.dumps({
+                "success": False, "error": "discovery_failed",
+                "message": str(e)[:200],
+            }, ensure_ascii=False)
