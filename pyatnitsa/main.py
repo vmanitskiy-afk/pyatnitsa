@@ -107,6 +107,22 @@ async def run():
     # Определяем путь к навыкам: если указан абсолютный — используем его,
     # иначе ищем относительно пакета pyatnitsa/skills/examples/
     # Пробрасываем настройки интеграций из веб-панели в env для скиллов
+    # Все env-vars которые может сохранить admin-панель через skill.{name}.{ENV_KEY}
+    # Собираем их все и прокидываем в os.environ перед загрузкой скиллов
+    _all_skill_env_keys = [
+        "REDMINE_URL", "REDMINE_API_KEY", "REDMINE_ADMIN_KEY", "RDM_LOGIN", "RDM_PASSWORD",
+        "MAILRU_USER", "MAILRU_APP_PASSWORD", "MAILRU_CALDAV_URL", "MAILRU_TIMEZONE",
+        "BITRIX_WEBHOOK_URL", "ONEC_BASE_URL", "ONEC_USERNAME", "ONEC_PASSWORD",
+        "FILES_WORKSPACE",
+    ]
+    _skill_names = ["redmine", "mail", "calendar", "browser", "rusprofile", "shortener", "files"]
+    for _skill_name in _skill_names:
+        for _env_key in _all_skill_env_keys:
+            _v = await settings_store.get(f"skill.{_skill_name}.{_env_key}")
+            if _v and not os.environ.get(_env_key):
+                os.environ[_env_key] = _v
+
+    # Обратная совместимость — старые ключи integrations.*
     _int_map = {
         "integrations.redmine_url": "REDMINE_URL",
         "integrations.redmine_api_key": "REDMINE_API_KEY",
@@ -271,3 +287,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
