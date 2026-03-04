@@ -88,6 +88,7 @@ class Settings(BaseSettings):
     # API server
     api_host: str = "0.0.0.0"
     api_port: int = 8080
+    admin_password: str = ""  # пароль для админ-панели
     
     # Sub-settings
     llm: LLMSettings = Field(default_factory=LLMSettings)

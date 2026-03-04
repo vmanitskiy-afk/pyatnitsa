@@ -24,8 +24,10 @@ from pyatnitsa.skills.skills import SkillLoader
 from pyatnitsa.memory.store import MemoryStore
 from pyatnitsa.memory.conversations import ConversationStore
 from pyatnitsa.memory.files import FileStore
+from pyatnitsa.memory.events import EventTracker
 from pyatnitsa.scheduler.heartbeat import Heartbeat
 from pyatnitsa.api.server import app as fastapi_app, inject_dependencies
+from pyatnitsa.api.admin import router as admin_router, inject_admin_deps
 
 logger = structlog.get_logger()
 
@@ -58,6 +60,10 @@ async def run():
 
     file_store = FileStore(db=memory._db)
     await file_store.init()
+
+    # Трекер событий (аналитика + профили пользователей)
+    event_tracker = EventTracker(db=memory._db)
+    await event_tracker.init()
 
     # Читаем credentials из settings_store (веб-панель может их обновить)
     gc_creds = settings.llm.gigachat_credentials or await settings_store.get("llm.gigachat_credentials")
@@ -146,6 +152,23 @@ async def run():
         conversation_store=conversation_store,
         file_store=file_store,
     )
+
+    # ─── Admin panel ─────────────────────────────────────────
+    admin_password = settings.admin_password or os.environ.get("ADMIN_PASSWORD", "")
+    fastapi_app.include_router(admin_router)
+    inject_admin_deps(
+        event_tracker=event_tracker,
+        settings_store=settings_store,
+        conversation_store=conversation_store,
+        skill_loader=skills,
+        llm_manager=llm,
+        agent=agent,
+        admin_password=admin_password,
+    )
+
+    # Передаём event_tracker агенту для трекинга
+    if agent:
+        agent.event_tracker = event_tracker
 
     # ─── Channels (опционально) ──────────────────────────────
     channels = []

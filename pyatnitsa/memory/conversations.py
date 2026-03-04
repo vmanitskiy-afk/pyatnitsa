@@ -421,3 +421,34 @@ class ConversationStore:
             is_compacted=bool(row["is_compacted"]),
             created_at=row["created_at"],
         )
+
+    # ─── Admin queries ─────────────────────────────────────
+
+    async def get_all_chats(self, limit: int = 20) -> list[dict]:
+        """Все чаты всех пользователей (для админки)."""
+        cursor = await self._db.execute(
+            """SELECT c.*, COUNT(m.id) as message_count
+               FROM chats c
+               LEFT JOIN chat_messages m ON m.chat_id = c.id
+                   AND m.is_compacted = 0
+               GROUP BY c.id
+               ORDER BY c.updated_at DESC LIMIT ?""",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        return [self._row_to_chat(r).to_dict() for r in rows]
+
+    async def get_user_chats(self, user_id: str, limit: int = 20) -> list[dict]:
+        """Чаты конкретного пользователя (для админки)."""
+        cursor = await self._db.execute(
+            """SELECT c.*, COUNT(m.id) as message_count
+               FROM chats c
+               LEFT JOIN chat_messages m ON m.chat_id = c.id
+                   AND m.is_compacted = 0
+               WHERE c.user_id = ?
+               GROUP BY c.id
+               ORDER BY c.updated_at DESC LIMIT ?""",
+            (user_id, limit),
+        )
+        rows = await cursor.fetchall()
+        return [self._row_to_chat(r).to_dict() for r in rows]

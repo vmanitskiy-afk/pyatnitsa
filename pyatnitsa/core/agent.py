@@ -69,13 +69,29 @@ class Agent:
         self.memory = memory
         self.conversations = conversations
         self.file_store = file_store
+        self.event_tracker = None  # инжектируется из main.py
 
     async def handle_message(self, message: Message) -> Response:
+        import time as _time
+        t0 = _time.time()
         user_id = message.user_id
         text = (message.text or "").strip()
         logger.info("agent_message_received", user_id=user_id,
                      channel=message.channel, text=text[:100],
                      attachments=len(message.attachments))
+
+        # Трекинг: сообщение + профиль пользователя
+        if self.event_tracker:
+            sender_name = (message.raw or {}).get("sender_name", "")
+            await self.event_tracker.track(
+                "message", user_id=user_id, channel=message.channel,
+                text_len=len(text), attachments=len(message.attachments))
+            await self.event_tracker.touch_user(
+                user_id, channel=message.channel, display_name=sender_name or None)
+
+            # Проверка блокировки
+            if await self.event_tracker.is_blocked(user_id):
+                return Response(text="⛔ Ваш доступ ограничен.")
 
         if text.startswith("/"):
             cmd_response = await self._handle_command(user_id, text, message.channel)
@@ -251,9 +267,22 @@ class Agent:
         return None
 
     async def _run_agent_loop(self, user_id, system, messages, tools, chat_id=None, max_iterations=5):
+        import time as _time
         for i in range(max_iterations):
+            t0 = _time.time()
             llm_response = await self.llm.complete(messages=messages, system=system,
                                                     tools=tools if tools else None)
+            latency = round((_time.time() - t0) * 1000)
+
+            # Трекинг LLM вызова
+            if self.event_tracker:
+                tokens = getattr(llm_response, 'usage', {})
+                total_tok = tokens.get('total_tokens', 0) if isinstance(tokens, dict) else 0
+                await self.event_tracker.track(
+                    "llm_call", user_id=user_id,
+                    provider=getattr(llm_response, 'provider', 'unknown'),
+                    latency_ms=latency, tokens=total_tok)
+
             if not llm_response.tool_calls:
                 return llm_response.text or "Не могу сформулировать ответ."
 
@@ -269,8 +298,17 @@ class Agent:
 
             tool_results = []
             for tc in llm_response.tool_calls:
+                t0_skill = _time.time()
                 result = await self.skills.execute_tool(tc.skill_name, tc.action, tc.params)
+                skill_latency = round((_time.time() - t0_skill) * 1000)
                 tool_results.append({"type": "tool_result", "tool_use_id": tc.id, "content": result})
+
+                # Трекинг вызова скилла
+                if self.event_tracker:
+                    await self.event_tracker.track(
+                        "skill_call", user_id=user_id,
+                        skill=tc.skill_name, action=tc.action, latency_ms=skill_latency)
+
             messages.append(LLMMessage(role="user", content=tool_results))
             if self.conversations and chat_id:
                 await self.conversations.add_message(chat_id, "user", tool_results)
