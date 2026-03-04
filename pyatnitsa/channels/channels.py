@@ -360,18 +360,49 @@ class TelegramChannel(BaseChannel):
                 raw={"sender_name": ((tg_message.from_user.first_name or "") + " " + (tg_message.from_user.last_name or "")).strip() if tg_message.from_user else ""},
                 role=MessageRole.USER,
             )
-            await self._dispatch(msg)
+            # Запускаем обработку в фоне — чтобы не блокировать polling
+            import asyncio
+            asyncio.create_task(self._dispatch(msg))
         
         logger.info("telegram_channel_starting", polling=self.use_polling)
-        
+
         if self.use_polling:
-            await self._dp.start_polling(self._bot)
-    
+            await self._polling_loop()
+
+    async def _polling_loop(self):
+        """Polling с автоматическим перезапуском при обрывах."""
+        import asyncio
+        retry_delay = 5
+        while True:
+            try:
+                logger.info("tg_polling_start")
+                await self._dp.start_polling(
+                    self._bot,
+                    handle_signals=False,
+                    allowed_updates=["message"],
+                )
+            except asyncio.CancelledError:
+                logger.info("tg_polling_cancelled")
+                break
+            except Exception as e:
+                logger.warning("tg_polling_error", error=str(e)[:200], retry_in=retry_delay)
+                await asyncio.sleep(retry_delay)
+                retry_delay = min(retry_delay * 2, 60)
+            else:
+                # start_polling вернул управление — значит был stop, выходим
+                break
+
     async def stop(self):
         if self._dp:
-            await self._dp.stop_polling()
+            try:
+                await self._dp.stop_polling()
+            except Exception:
+                pass
         if self._bot:
-            await self._bot.session.close()
+            try:
+                await self._bot.session.close()
+            except Exception:
+                pass
     
     async def send(self, chat_id: str, response: Response):
         if not self._bot:
@@ -411,3 +442,4 @@ class TelegramChannel(BaseChannel):
                     await self._bot.send_document(chat_id=int(chat_id), document=f)
             except Exception as e:
                 logger.error("tg_send_file_error", error=str(e))
+
