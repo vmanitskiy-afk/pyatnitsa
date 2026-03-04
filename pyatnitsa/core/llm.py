@@ -247,6 +247,8 @@ class GigaChatProvider(LLMProvider):
                         required=tool.parameters.get("required", []),
                     ),
                 ))
+            logger.info("gigachat_tools", count=len(gc_functions),
+                        names=[f.name for f in gc_functions])
         
         # Формируем запрос
         chat = Chat(
