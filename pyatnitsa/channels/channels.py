@@ -140,6 +140,7 @@ class MaxChannel(BaseChannel):
         self._dp = Dispatcher()
         self._bot_username = None
         self._bot_id = None
+        _seen_mids: set[str] = set()  # дедуп на уровне handler
         
         @self._dp.bot_started()
         async def on_start(event: BotStarted):
@@ -160,6 +161,16 @@ class MaxChannel(BaseChannel):
             mid = m.body.mid if m.body else str(uuid.uuid4())
             chat_id = str(m.recipient.chat_id) if m.recipient else "0"
             user_id = str(m.sender.user_id) if m.sender else "unknown"
+
+            # Дедупликация по mid — SDK может вызвать handler несколько раз
+            if mid in _seen_mids:
+                return
+            _seen_mids.add(mid)
+            if len(_seen_mids) > 1000:
+                # Оставляем последние 500
+                to_remove = list(_seen_mids)[:500]
+                for k in to_remove:
+                    _seen_mids.discard(k)
 
             # Кеш bot info
             if self._bot_username is None:
