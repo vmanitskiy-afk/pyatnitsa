@@ -769,7 +769,17 @@ function connectWS() {
       var container = document.getElementById('messages');
       container.innerHTML = '';
       if (data.messages && data.messages.length > 0) {
-        data.messages.forEach(function(m) { addMsg(m.role, m.text); });
+        data.messages.forEach(function(m) {
+          var html = m.text || '';
+          if (m.attachments && m.attachments.length > 0) {
+            html = m.attachments.map(function(a) {
+              if (a.mime_type && a.mime_type.startsWith('image/'))
+                return '<img class="msg-image" src="' + a.url + '" onclick="window.open(this.src)" alt="' + (a.name||'') + '">';
+              return '<a class="msg-file" href="' + a.url + '" target="_blank">' + (a.name||'file') + '</a>';
+            }).join('') + html;
+          }
+          addMsg(m.role, html);
+        });
       } else {
         addMsg('system', 'Подключено к Пятнице');
       }
