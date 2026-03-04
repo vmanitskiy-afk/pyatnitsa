@@ -762,6 +762,22 @@ body {
 
 <div class="toast" id="toast"></div>
 
+<!-- Folder Picker Modal -->
+<div class="folder-modal-overlay" id="folderModal">
+  <div class="folder-modal">
+    <div class="folder-modal-header">
+      Выберите папку
+      <button class="btn btn-ghost" onclick="closeFolderPicker()" style="padding:2px 8px;font-size:16px">✕</button>
+    </div>
+    <div class="folder-modal-path"><span id="folderCurrentPath">/</span></div>
+    <div class="folder-modal-list" id="folderList"></div>
+    <div class="folder-modal-footer">
+      <button class="btn btn-ghost" onclick="closeFolderPicker()">Отмена</button>
+      <button class="btn" onclick="selectFolder()" style="background:var(--accent);color:#fff;border-color:var(--accent)">Выбрать эту папку</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // ─── State ──────────────────────────────────────────────────
 let ws = null;
@@ -1221,20 +1237,5 @@ document.getElementById('folderModal').addEventListener('click', function(e) {
 
 connectWS();
 </script>
-<!-- Folder Picker Modal -->
-<div class="folder-modal-overlay" id="folderModal">
-  <div class="folder-modal">
-    <div class="folder-modal-header">
-      Выберите папку
-      <button class="btn btn-ghost" onclick="closeFolderPicker()" style="padding:2px 8px;font-size:16px">✕</button>
-    </div>
-    <div class="folder-modal-path"><span id="folderCurrentPath">/</span></div>
-    <div class="folder-modal-list" id="folderList"></div>
-    <div class="folder-modal-footer">
-      <button class="btn btn-ghost" onclick="closeFolderPicker()">Отмена</button>
-      <button class="btn" onclick="selectFolder()" style="background:var(--accent);color:#fff;border-color:var(--accent)">Выбрать эту папку</button>
-    </div>
-  </div>
-</div>
 </body>
 </html>
