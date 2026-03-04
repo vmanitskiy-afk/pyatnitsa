@@ -448,6 +448,18 @@ class RedmineSkill(BaseSkill):
 
                 logger.info("playwright_filled", name=name, identifier=identifier)
 
+                # Заполняем parent_id если есть поле в форме
+                if parent_id:
+                    await page.evaluate("""(pid) => {
+                        const sel = document.querySelector('select[name="project[parent_id]"], select[name="template[project][][parent_id]"], #project_parent_id');
+                        if (sel) {
+                            sel.value = String(pid);
+                            sel.dispatchEvent(new Event('change', {bubbles: true}));
+                        }
+                        const inp = document.querySelector('input[name="project[parent_id]"]');
+                        if (inp) inp.value = String(pid);
+                    }""", parent_id)
+
                 # Нажимаем submit
                 if form_info["hasName"] and any("Создать" in l or "Create" in l for l in form_info["submitLabels"]):
                     # EasyRedmine template form
@@ -641,7 +653,7 @@ class RedmineSkill(BaseSkill):
                 "type": "object", "properties": {
                     "template": {"type": "string", "description": "Идентификатор шаблона (напр. trade_v2)"},
                     "name": {"type": "string", "description": "Название нового проекта"},
-                    "parent_id": {"type": "integer", "description": "ID родительского проекта"},
+                    "parent_id": {"type": "integer", "description": "ID родительского проекта (по умолчанию 25)", "default": 25},
                 }, "required": ["template", "name"],
             }),
             LLMTool("redmine.attach", "Загрузить файл и прикрепить к задаче/сделке в Redmine. Используй абсолютный путь из контекста файлов [File: ... | path: ...]", {
@@ -948,6 +960,8 @@ class RedmineSkill(BaseSkill):
 
     async def _exec_create_from_template(self, p):
         """Обёртка для вызова _create_from_template как инструмента."""
+        if not p.get("parent_id"):
+            p["parent_id"] = 25
         ident = p.get("identifier") or slugify_identifier(p["name"])
         result = await self._create_from_template(
             template_ident=p["template"],
@@ -2206,3 +2220,4 @@ class RedmineSkill(BaseSkill):
                 "success": False, "error": "discovery_failed",
                 "message": str(e)[:200],
             }, ensure_ascii=False)
+
