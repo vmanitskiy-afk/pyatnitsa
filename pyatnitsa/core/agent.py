@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import structlog
@@ -69,6 +70,8 @@ class Agent:
         self.memory = memory
         self.conversations = conversations
         self.file_store = file_store
+        self._user_locks: dict[str, asyncio.Lock] = {}
+        self._user_last_msg: dict[str, float] = {}  # user_id -> timestamp последнего обработанного
 
     async def handle_message(self, message: Message) -> Response:
         user_id = message.user_id
@@ -76,6 +79,25 @@ class Agent:
         logger.info("agent_message_received", user_id=user_id,
                      channel=message.channel, text=text[:100],
                      attachments=len(message.attachments))
+
+        # Per-user lock: один пользователь — одно сообщение за раз.
+        # Дубли от MAX будут ждать в очереди, а потом отбрасываться по timestamp.
+        import time as _time
+        if user_id not in self._user_locks:
+            self._user_locks[user_id] = asyncio.Lock()
+
+        async with self._user_locks[user_id]:
+            now = _time.time()
+            last = self._user_last_msg.get(user_id, 0)
+            # Если прошлое сообщение закончило обработку <5с назад и это не команда — дубль
+            if now - last < 5.0 and not text.startswith("/"):
+                logger.info("agent_dedup_skip", user_id=user_id, gap=round(now - last, 2))
+                return Response(text=None)
+            result = await self._handle_message_inner(message, user_id, text)
+            self._user_last_msg[user_id] = _time.time()  # ставим при ЗАВЕРШЕНИИ
+            return result
+
+    async def _handle_message_inner(self, message: Message, user_id: str, text: str) -> Response:
 
         if text.startswith("/"):
             cmd_response = await self._handle_command(user_id, text, message.channel)
