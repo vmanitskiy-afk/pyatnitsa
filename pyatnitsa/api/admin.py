@@ -93,9 +93,36 @@ async def get_stats(hours: float = 24, _=Depends(require_admin)):
 
 # ─── Skills ──────────────────────────────────────────────────
 
+# Required env vars per skill name
+_SKILL_ENV_VARS: dict[str, list[dict]] = {
+    "mail": [
+        {"key": "MAILRU_USER", "label": "Email адрес", "placeholder": "user@mail.ru"},
+        {"key": "MAILRU_APP_PASSWORD", "label": "Пароль приложения", "secret": True,
+         "hint": "Mail.ru → Настройки → Безопасность → Пароли приложений"},
+    ],
+    "calendar": [
+        {"key": "MAILRU_USER", "label": "Email адрес", "placeholder": "user@mail.ru"},
+        {"key": "MAILRU_APP_PASSWORD", "label": "Пароль приложения", "secret": True},
+        {"key": "MAILRU_CALDAV_URL", "label": "CalDAV URL", "placeholder": "https://calendar.mail.ru/principals/..."},
+        {"key": "MAILRU_TIMEZONE", "label": "Часовой пояс", "placeholder": "Europe/Moscow"},
+    ],
+    "redmine": [
+        {"key": "REDMINE_URL", "label": "Адрес EasyRedmine", "placeholder": "https://rdm.example.com"},
+        {"key": "REDMINE_API_KEY", "label": "API-ключ пользователя", "secret": True},
+        {"key": "REDMINE_ADMIN_KEY", "label": "API-ключ администратора", "secret": True, "required": False},
+        {"key": "RDM_LOGIN", "label": "Логин (Playwright)", "required": False},
+        {"key": "RDM_PASSWORD", "label": "Пароль (Playwright)", "secret": True, "required": False},
+    ],
+    "rusprofile": [],
+    "browser": [],
+    "shortener": [],
+    "files": [],
+}
+
+
 @router.get("/skills")
 async def list_skills(_=Depends(require_admin)):
-    """Список скиллов с их статусом."""
+    """Список скиллов с их статусом, инструментами и требуемыми переменными окружения."""
     if not _skill_loader:
         return []
     skills = []
@@ -105,12 +132,20 @@ async def list_skills(_=Depends(require_admin)):
             val = await _settings_store.get(f"skill.{name}.enabled")
             if val == "false":
                 enabled = False
+
+        tools = [{"name": t.name, "description": t.description}
+                 for t in skill.get_tools()]
+
+        env_vars = _SKILL_ENV_VARS.get(name, [])
+
         skills.append({
             "name": name,
             "description": skill.description,
             "version": skill.version,
             "enabled": enabled,
-            "tools_count": len(skill.get_tools()),
+            "tools_count": len(tools),
+            "tools": tools,
+            "env_vars": env_vars,
         })
     return skills
 
@@ -294,3 +329,4 @@ async def get_conversation(chat_id: int, _=Depends(require_admin)):
         raise HTTPException(503)
     messages = await _conversation_store.get_messages(chat_id, limit=200)
     return {"chat_id": chat_id, "messages": messages}
+
