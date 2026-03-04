@@ -72,6 +72,7 @@ class MaxChannel(BaseChannel):
         self._bot = None
         self._dp = None
         self._seen_mids: dict[str, float] = {}  # дедупликация: hash -> timestamp
+        self._dedup_lock = None  # инициализируем в start() т.к. нужен event loop
     
     async def start(self):
         """Запускает MAX бот через polling или webhook."""
@@ -86,6 +87,8 @@ class MaxChannel(BaseChannel):
         self._dp = Dispatcher()
         self._bot_username = None
         self._bot_id = None
+        import asyncio as _aio
+        self._dedup_lock = _aio.Lock()
         
         @self._dp.bot_started()
         async def on_start(event: BotStarted):
@@ -107,19 +110,18 @@ class MaxChannel(BaseChannel):
             chat_id = str(m.recipient.chat_id) if m.recipient else "0"
             user_id = str(m.sender.user_id) if m.sender else "unknown"
 
-            # Дедупликация — MAX polling может доставить одно сообщение несколько раз
-            # mid может отличаться, поэтому дедуплицируем по user + содержимое + время
+            # Дедупликация — MAX polling доставляет одно сообщение несколько раз
             import hashlib, time as _time
             att_count = len(m.body.attachments or [])
             dedup_key = f"{user_id}:{text or ''}:{att_count}"
             dedup_hash = hashlib.md5(dedup_key.encode()).hexdigest()[:16]
             now = _time.time()
-            # Чистим старые записи (>30s)
-            self._seen_mids = {k: v for k, v in self._seen_mids.items() if now - v < 30}
-            if dedup_hash in self._seen_mids:
-                logger.debug("max_dedup_skip", mid=mid, user_id=user_id)
-                return
-            self._seen_mids[dedup_hash] = now
+            async with self._dedup_lock:
+                self._seen_mids = {k: v for k, v in self._seen_mids.items() if now - v < 30}
+                if dedup_hash in self._seen_mids:
+                    logger.debug("max_dedup_skip", mid=mid, user_id=user_id)
+                    return
+                self._seen_mids[dedup_hash] = now
 
             # Кеш bot info
             if self._bot_username is None:
