@@ -522,6 +522,41 @@ body {
   .nav-item { justify-content: center; padding: 12px; }
   .msg { max-width: 90%; }
 }
+/* ─── Folder Picker Modal ────────────────────────────── */
+.folder-modal-overlay {
+  display:none; position:fixed; inset:0; background:rgba(0,0,0,.6);
+  z-index:200; align-items:center; justify-content:center;
+}
+.folder-modal-overlay.active { display:flex; }
+.folder-modal {
+  background:var(--bg-secondary); border:1px solid var(--border);
+  border-radius:12px; width:480px; max-height:70vh; display:flex; flex-direction:column;
+  box-shadow: 0 20px 60px rgba(0,0,0,.4);
+}
+.folder-modal-header {
+  padding:14px 16px; border-bottom:1px solid var(--border);
+  display:flex; align-items:center; justify-content:space-between;
+  font-weight:600; font-size:14px;
+}
+.folder-modal-path {
+  padding:8px 16px; font-size:12px; color:var(--text-secondary);
+  font-family:var(--font-mono); border-bottom:1px solid var(--border);
+  display:flex; align-items:center; gap:6px; overflow:hidden;
+}
+.folder-modal-path span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.folder-modal-list {
+  flex:1; overflow-y:auto; padding:4px 0; min-height:200px; max-height:400px;
+}
+.folder-item {
+  padding:8px 16px; cursor:pointer; display:flex; align-items:center; gap:8px;
+  font-size:13px; transition:background .1s;
+}
+.folder-item:hover { background:var(--bg-hover); }
+.folder-item.up { color:var(--accent); font-weight:500; }
+.folder-modal-footer {
+  padding:12px 16px; border-top:1px solid var(--border);
+  display:flex; justify-content:flex-end; gap:8px;
+}
 </style>
 </head>
 <body>
@@ -676,7 +711,10 @@ body {
           <div class="settings-section-body">
             <div class="field">
               <label>files.workspace</label>
-              <input type="text" data-key="files.workspace" placeholder="/Users/vlad/Documents">
+              <div style="display:flex;gap:6px">
+                <input type="text" data-key="files.workspace" placeholder="/Users/vlad/Documents" style="flex:1" id="workspaceInput">
+                <button class="btn btn-ghost" onclick="openFolderPicker()" style="white-space:nowrap;padding:6px 12px;font-size:12px">📂 Обзор</button>
+              </div>
               <div class="hint">Рабочая папка — агент получит доступ к файлам в этой директории. После изменения нажмите «Сохранить и перезапустить».</div>
             </div>
           </div>
@@ -1126,7 +1164,77 @@ document.addEventListener('drop', function(e) {
   }
 });
 
+// ─── Folder Picker ─────────────────────────────────────
+var _folderCurrentPath = '~';
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function openFolderPicker() {
+  var current = document.getElementById('workspaceInput').value || '~';
+  _folderCurrentPath = current;
+  document.getElementById('folderModal').classList.add('active');
+  browseTo(current);
+}
+
+function closeFolderPicker() {
+  document.getElementById('folderModal').classList.remove('active');
+}
+
+function selectFolder() {
+  document.getElementById('workspaceInput').value = _folderCurrentPath;
+  // Trigger change for settings dirty tracking
+  var ev = new Event('input', {bubbles:true});
+  document.getElementById('workspaceInput').dispatchEvent(ev);
+  closeFolderPicker();
+}
+
+function browseTo(path) {
+  fetch('/api/browse?path=' + encodeURIComponent(path))
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.error) { return; }
+      _folderCurrentPath = data.path;
+      document.getElementById('folderCurrentPath').textContent = data.path;
+      var html = '';
+      if (data.parent) {
+        html += '<div class="folder-item up" onclick="browseTo(\'' + escAttr(data.parent) + '\')">' +
+                '⬆️ ..</div>';
+      }
+      data.dirs.forEach(function(d) {
+        var full = data.path + '/' + d;
+        html += '<div class="folder-item" onclick="browseTo(\'' + escAttr(full) + '\')">' +
+                '📁 ' + esc(d) + '</div>';
+      });
+      if (!data.dirs.length && !data.parent) {
+        html = '<div style="padding:20px;text-align:center;color:var(--text-secondary)">Пусто</div>';
+      }
+      document.getElementById('folderList').innerHTML = html;
+    })
+    .catch(function() {});
+}
+
+function escAttr(s) { return s.replace(/\\/g, '\\\\').replace(/'/g, "\\'"); }
+
+// Close modal on overlay click
+document.getElementById('folderModal').addEventListener('click', function(e) {
+  if (e.target === this) closeFolderPicker();
+});
+
 connectWS();
 </script>
+<!-- Folder Picker Modal -->
+<div class="folder-modal-overlay" id="folderModal">
+  <div class="folder-modal">
+    <div class="folder-modal-header">
+      Выберите папку
+      <button class="btn btn-ghost" onclick="closeFolderPicker()" style="padding:2px 8px;font-size:16px">✕</button>
+    </div>
+    <div class="folder-modal-path"><span id="folderCurrentPath">/</span></div>
+    <div class="folder-modal-list" id="folderList"></div>
+    <div class="folder-modal-footer">
+      <button class="btn btn-ghost" onclick="closeFolderPicker()">Отмена</button>
+      <button class="btn" onclick="selectFolder()" style="background:var(--accent);color:#fff;border-color:var(--accent)">Выбрать эту папку</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>

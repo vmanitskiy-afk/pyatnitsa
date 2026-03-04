@@ -328,6 +328,31 @@ async def system_status():
     return info
 
 
+# ─── Folder browser (for workspace picker) ─────────────────
+
+@app.get("/api/browse")
+async def browse_folders(path: str = "~"):
+    """Список папок на сервере для выбора workspace."""
+    import os
+    target = os.path.expanduser(path)
+    target = os.path.realpath(target)
+    if not os.path.isdir(target):
+        return JSONResponse({"error": "Путь не найден"}, status_code=404)
+    
+    dirs = []
+    try:
+        for entry in sorted(os.scandir(target), key=lambda e: e.name.lower()):
+            if entry.name.startswith("."):
+                continue
+            if entry.is_dir(follow_symlinks=False):
+                dirs.append(entry.name)
+    except PermissionError:
+        pass
+    
+    parent = os.path.dirname(target) if target != "/" else None
+    return {"path": target, "parent": parent, "dirs": dirs}
+
+
 # ─── Web UI (single page) ───────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
