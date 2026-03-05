@@ -573,6 +573,11 @@ class RedmineSkill(BaseSkill):
                     "assigned_to": {"type": "string"}, "tracker": {"type": "string", "default": "task"},
                     "priority": {"type": "string", "enum": ["low", "normal", "high", "urgent"], "default": "normal"},
                     "due_date": {"type": "string"}, "parent_id": {"type": "integer"},
+                    "custom_fields": {
+                        "type": "object",
+                        "description": "Кастомные поля: ключ — id поля (число), значение — строка. Пример: 27 -> ООО ИСА",
+                        "additionalProperties": {"type": "string"},
+                    },
                 }, "required": ["project", "subject"],
             }),
             LLMTool("redmine.update_task", "Обновляет задачу: статус, приоритет, назначение", {
@@ -581,6 +586,11 @@ class RedmineSkill(BaseSkill):
                     "priority": {"type": "string"}, "subject": {"type": "string"},
                     "assigned_to": {"type": "string"}, "due_date": {"type": "string"},
                     "done_ratio": {"type": "integer"}, "notes": {"type": "string"},
+                    "custom_fields": {
+                        "type": "object",
+                        "description": "Кастомные поля: ключ — id поля (число), значение — строка. Пример: 27 -> ООО ИСА",
+                        "additionalProperties": {"type": "string"},
+                    },
                 }, "required": ["id"],
             }),
             LLMTool("redmine.comment", "Комментарий к задаче", {
@@ -817,10 +827,18 @@ class RedmineSkill(BaseSkill):
                 if u: issue["assigned_to_id"] = u["id"]
         if p.get("due_date"): issue["due_date"] = p["due_date"]
         if p.get("parent_id"): issue["parent_issue_id"] = p["parent_id"]
+        cf_warnings = []
+        if p.get("custom_fields"):
+            cfs = await self._resolve_custom_fields(p["custom_fields"], cf_warnings)
+            if cfs:
+                issue["custom_fields"] = cfs
         data = await self._api("POST", "/issues.json", body={"issue": issue})
         i = data["issue"]
-        return json.dumps({"success": True, "id": i["id"], "subject": i["subject"],
-            "project": i.get("project",{}).get("name"), "url": f"{self.base_url}/issues/{i['id']}"}, ensure_ascii=False)
+        result = {"success": True, "id": i["id"], "subject": i["subject"],
+            "project": i.get("project",{}).get("name"), "url": f"{self.base_url}/issues/{i['id']}"}
+        if cf_warnings:
+            result["cf_warnings"] = cf_warnings
+        return json.dumps(result, ensure_ascii=False)
 
     async def _update_task(self, p):
         iid = p["id"]
@@ -839,8 +857,16 @@ class RedmineSkill(BaseSkill):
                 if u: issue["assigned_to_id"] = u["id"]
         if p.get("due_date"): issue["due_date"] = p["due_date"]
         if p.get("done_ratio") is not None: issue["done_ratio"] = p["done_ratio"]
+        cf_warnings = []
+        if p.get("custom_fields"):
+            cfs = await self._resolve_custom_fields(p["custom_fields"], cf_warnings)
+            if cfs:
+                issue["custom_fields"] = cfs
         await self._api("PUT", f"/issues/{iid}.json", body={"issue": issue})
-        return json.dumps({"success": True, "updated": iid, "url": f"{self.base_url}/issues/{iid}"}, ensure_ascii=False)
+        result = {"success": True, "updated": iid, "url": f"{self.base_url}/issues/{iid}"}
+        if cf_warnings:
+            result["cf_warnings"] = cf_warnings
+        return json.dumps(result, ensure_ascii=False)
 
     async def _comment(self, p):
         iid, text = p["id"], p["text"]
@@ -1311,86 +1337,18 @@ class RedmineSkill(BaseSkill):
         if p.get("curator"):
             cf_inputs[378] = p["curator"]
 
+        # Резолвим CF через fuzzy-метод (кеш, Levenstein, enum-нормализация)
         cf_warnings = []
-        cf_options = {}
-        try:
-            from playwright.async_api import async_playwright
-            rdm_login = os.getenv("RDM_LOGIN", "aione")
-            rdm_password = os.getenv("RDM_PASSWORD", "")
-
-            async with async_playwright() as pw:
-                browser = await pw.chromium.launch(headless=True)
-                bpage = await browser.new_page()
-                await bpage.goto(f"{self.base_url}/login")
-                await bpage.wait_for_load_state("domcontentloaded")
-                await bpage.fill("#username", rdm_login)
-                await bpage.fill("#password", rdm_password)
-                await bpage.click('button[type="submit"]')
-                try:
-                    await bpage.wait_for_load_state("networkidle")
-                except Exception:
-                    pass
-                await bpage.wait_for_timeout(2000)
-
-                await bpage.goto(f"{self.base_url}/projects/{pident}/settings/info",
-                                 wait_until="domcontentloaded")
-                await bpage.wait_for_timeout(2000)
-
-                cf_ids_list = list(cf_inputs.keys())
-                cf_options = await bpage.evaluate(
-                    """(cfIds) => {
-                    const result = {};
-                    for (const cfId of cfIds) {
-                        const sel = document.querySelector(
-                            'select[name="project[custom_field_values][' + cfId + ']"]');
-                        if (sel) {
-                            result[cfId] = Array.from(sel.options)
-                                .filter(o => o.value !== '')
-                                .map(o => ({ value: o.value, text: o.textContent.trim() }));
-                        }
-                    }
-                    return result;
-                    }""", cf_ids_list)
-                await browser.close()
-        except Exception as e:
-            log(f"  ⚠ CF scrape failed: {str(e)[:80]}")
-
-        def resolve_cf(cf_id, inp):
-            if not inp:
-                return None
-            opts_list = cf_options.get(str(cf_id)) or cf_options.get(cf_id) or []
-            if not opts_list:
-                return inp
-            exact = next((o for o in opts_list if o["value"] == inp), None)
-            if exact:
-                return exact["value"]
-            exact_text = next((o for o in opts_list if o["text"] == inp), None)
-            if exact_text:
-                return exact_text["value"]
-            lower = inp.lower()
-            matches = [o for o in opts_list
-                       if lower in o["value"].lower() or lower in o["text"].lower()]
-            if len(matches) == 1:
-                return matches[0]["value"]
-            if len(matches) > 1:
-                cf_warnings.append({"cf_id": cf_id, "input": inp, "error": "ambiguous",
-                                    "candidates": [m["value"] for m in matches[:5]]})
-                return None
-            cf_warnings.append({"cf_id": cf_id, "input": inp, "error": "not_found"})
-            return None
-
-        cf_updates = []
-        for cf_id, inp in cf_inputs.items():
-            resolved_val = resolve_cf(cf_id, inp)
-            if resolved_val is not None:
-                cf_updates.append({"id": cf_id, "value": resolved_val})
-                log(f'  ✓ cf_{cf_id}: "{inp}" → "{resolved_val}"')
+        cf_updates = await self._resolve_custom_fields(
+            {str(k): v for k, v in cf_inputs.items()}, cf_warnings
+        )
+        for w in cf_warnings:
+            if isinstance(w, dict):
+                log(f"  ⚠ cf_{w.get('field_id', '?')}: [{w.get('input', '')}] → {w.get('error', '?')} {[c['value'] for c in w.get('candidates', [])][:3]}")
             else:
-                w = next((w for w in cf_warnings if w["cf_id"] == cf_id), None)
-                if w and w["error"] == "ambiguous":
-                    log(f'  ⚠ cf_{cf_id}: "{inp}" → ambiguous. Field left empty.')
-                else:
-                    log(f'  ⚠ cf_{cf_id}: "{inp}" → not found. Field left empty.')
+                log(f"  ⚠ CF: {str(w)[:100]}")
+        for cf in cf_updates:
+            log(f"  ✓ cf_{cf['id']}: → [{cf['value']}]")
 
         if cf_updates:
             try:
@@ -1911,6 +1869,227 @@ class RedmineSkill(BaseSkill):
         "PERSON": 1, "ORGANIZATION": 2, "IP": 3,
         "SUBDIVISION": 4, "EMPLOYEE": 6,
     }
+
+    # ── CF Metadata cache ────────────────────────────────────
+    _cf_meta_cache: dict | None = None
+
+    async def _load_cf_metadata(self) -> dict | None:
+        """Загружает метаданные custom fields через admin API (кеш в памяти)."""
+        if self._cf_meta_cache is not None:
+            return self._cf_meta_cache
+        key = self.admin_key or self.api_key
+        if not key:
+            return None
+        try:
+            data = await self._api("GET", "/custom_fields.json", headers={"X-Redmine-API-Key": key} if key != self.api_key else None)
+            meta = {}
+            for cf in (data.get("custom_fields") or []):
+                meta[cf["id"]] = {
+                    "name": cf.get("name", ""),
+                    "field_format": cf.get("field_format", "string"),
+                    "possible_values": cf.get("possible_values") or [],
+                    "is_required": cf.get("is_required", False),
+                }
+            self.__class__._cf_meta_cache = meta
+            logger.info("cf_metadata_loaded", count=len(meta))
+            return meta
+        except Exception as e:
+            logger.warning("cf_metadata_load_failed", error=str(e)[:100])
+            return None
+
+    @staticmethod
+    def _normalize_enum_text(s: str) -> str:
+        """Нормализует строку для сравнения enum-значений."""
+        import re
+        s = s.lower()
+        # Убираем кавычки и скобки с содержимым
+        s = re.sub(r'["\'«»„"]', '', s)
+        s = re.sub(r'\(.*?\)', '', s)
+        # Убираем организационно-правовые формы
+        opf = r'\b(ооо|зао|оао|пао|ао|ип|нко|гуп|муп|фгуп|фгбу|фгку)\b'
+        s = re.sub(opf, '', s)
+        # Убираем лишние символы и пробелы
+        s = re.sub(r'[^а-яёa-z0-9\s]', ' ', s)
+        s = re.sub(r'\s+', ' ', s).strip()
+        return s
+
+    @staticmethod
+    def _levenshtein(a: str, b: str) -> int:
+        """Расстояние Левенштейна."""
+        if a == b:
+            return 0
+        if not a:
+            return len(b)
+        if not b:
+            return len(a)
+        row = list(range(len(b) + 1))
+        for i, ca in enumerate(a, 1):
+            new_row = [i]
+            for j, cb in enumerate(b, 1):
+                new_row.append(min(
+                    row[j] + 1,
+                    new_row[j - 1] + 1,
+                    row[j - 1] + (0 if ca == cb else 1),
+                ))
+            row = new_row
+        return row[-1]
+
+    def _similarity(self, a: str, b: str) -> float:
+        """Коэффициент схожести 0..1."""
+        na, nb = self._normalize_enum_text(a), self._normalize_enum_text(b)
+        if not na and not nb:
+            return 1.0
+        if not na or not nb:
+            return 0.0
+        dist = self._levenshtein(na, nb)
+        max_len = max(len(na), len(nb))
+        return 1.0 - dist / max_len
+
+    async def _resolve_enum_cf_value(self, cf_id: int, raw_value: str, cf_meta: dict | None) -> dict:
+        """Fuzzy-резолв значения списочного CF.
+
+        Returns:
+            success=True  → {success, value, source}
+            success=False → {success, error, field_id, input, message, candidates/all_values_sample}
+        """
+        # Get possible values
+        possible = []
+        field_name = f"cf_{cf_id}"
+        if cf_meta and cf_id in cf_meta:
+            m = cf_meta[cf_id]
+            field_name = m.get("name", field_name)
+            raw_pv = m.get("possible_values") or []
+            possible = [pv["value"] if isinstance(pv, dict) else pv for pv in raw_pv]
+
+        if not possible:
+            # Try fetching single CF
+            try:
+                key = self.admin_key or self.api_key
+                d = await self._api("GET", f"/custom_fields/{cf_id}.json",
+                                    headers={"X-Redmine-API-Key": key} if key != self.api_key else None)
+                cf_data = d.get("custom_field") or {}
+                raw_pv = cf_data.get("possible_values") or []
+                possible = [pv["value"] if isinstance(pv, dict) else pv for pv in raw_pv]
+                field_name = cf_data.get("name", field_name)
+            except Exception:
+                pass
+
+        if not possible:
+            logger.warning("cf_fuzzy_no_metadata", cf_id=cf_id)
+            return {
+                "success": True, "value": raw_value, "source": "fallback",
+                "warning": f"[CF] Нет метаданных для cf_{cf_id}, значение передаётся как есть",
+            }
+
+        v = raw_value.strip()
+
+        # 1. Exact match
+        if v in possible:
+            return {"success": True, "value": v, "source": "exact", "score": 1.0}
+
+        # 2. Case-insensitive exact
+        lower = v.lower()
+        ci_match = next((p for p in possible if p.lower() == lower), None)
+        if ci_match:
+            return {"success": True, "value": ci_match, "source": "normalized", "score": 1.0}
+
+        # 3. Normalized comparison
+        norm_input = self._normalize_enum_text(v)
+        norm_match = next((p for p in possible if self._normalize_enum_text(p) == norm_input), None)
+        if norm_match:
+            return {"success": True, "value": norm_match, "source": "normalized", "score": 0.99}
+
+        # 4. Fuzzy scoring
+        scored = sorted(
+            [{"value": p, "score": round(self._similarity(v, p), 3)} for p in possible],
+            key=lambda x: x["score"],
+            reverse=True,
+        )
+        top = scored[0]
+        second = scored[1] if len(scored) > 1 else {"score": 0}
+
+        if top["score"] >= 0.9 and (top["score"] - second["score"]) >= 0.05:
+            return {"success": True, "value": top["value"], "source": "fuzzy", "score": top["score"]}
+
+        if top["score"] >= 0.6:
+            return {
+                "success": False, "error": "enum_ambiguous",
+                "field_id": cf_id, "field_name": field_name,
+                "input": raw_value,
+                "message": f"Не удалось однозначно определить значение поля [{field_name}]",
+                "candidates": scored[:5],
+            }
+
+        return {
+            "success": False, "error": "enum_not_found",
+            "field_id": cf_id, "field_name": field_name,
+            "input": raw_value,
+            "message": f"Значение [{raw_value}] не найдено в поле [{field_name}]",
+            "all_values_sample": possible[:10],
+        }
+
+    async def _resolve_custom_fields(self, cf_inputs: dict, warnings: list) -> list:
+        """Резолвит словарь {cf_id: value} с fuzzy-матчингом для enum-полей.
+
+        Args:
+            cf_inputs: {cf_id (int|str): raw_value}
+            warnings:  список для предупреждений (мутируется)
+
+        Returns:
+            list of {id, value} для Redmine API
+        """
+        cf_meta = await self._load_cf_metadata()
+        result = []
+
+        for cf_id_raw, value in cf_inputs.items():
+            cf_id = int(cf_id_raw)
+            if not value and value != 0:
+                continue
+
+            meta = (cf_meta or {}).get(cf_id)
+            fmt = meta.get("field_format", "string") if meta else "string"
+
+            # Coerce by type
+            v = str(value).strip()
+
+            if fmt in ("list", "enumeration", "value_tree"):
+                res = await self._resolve_enum_cf_value(cf_id, v, cf_meta)
+                if res.get("success"):
+                    if res.get("warning"):
+                        warnings.append(res["warning"])
+                    result.append({"id": cf_id, "value": res["value"]})
+                    if res["source"] != "exact":
+                        logger.info("cf_fuzzy_resolved", cf_id=cf_id, input=v, value=res["value"], source=res["source"])
+                else:
+                    warnings.append(res)
+                    logger.warning("cf_fuzzy_failed", cf_id=cf_id, error=res.get("error"), input=v)
+                    # Don't add to result — skip this field
+                continue
+
+            if fmt == "date":
+                import re
+                m = re.match(r'^(\d{2})[./-](\d{2})[./-](\d{4})$', v)
+                if m:
+                    v = f"{m.group(3)}-{m.group(2)}-{m.group(1)}"
+
+            if fmt in ("int",):
+                try:
+                    v = str(int(v.replace(" ", "").replace(",", ".")))
+                except ValueError:
+                    pass
+
+            if fmt in ("float", "amount"):
+                try:
+                    v = str(float(v.replace(" ", "").replace(",", ".")))
+                except ValueError:
+                    pass
+
+            if fmt == "bool":
+                v = "1" if v.lower() in ("1", "true", "да", "yes") else "0"
+
+            result.append({"id": cf_id, "value": v})
+
+        return result
 
     # ── create_contact_from_inn ──────────────────────────
 
