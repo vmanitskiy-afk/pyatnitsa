@@ -1,6 +1,7 @@
-"""Agент Пятница -- главный оркестратор.
+"""Agент Пятница -- главный оркестратор (Router).
 
 Персистентные чаты, компакция длинных диалогов, команды /new /history.
+Мультиагентный режим: Router делегирует задачи суб-агентам через tool "delegate".
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from pyatnitsa.memory.conversations import ConversationStore
 
 logger = structlog.get_logger()
 
+# System prompt для режима без суб-агентов (legacy)
 SYSTEM_PROMPT = """Ты - Пятница, персональный AI-ассистент для бизнеса.
 Ты помогаешь управлять задачами, проектами, почтой, календарём и бизнес-процессами.
 
@@ -34,6 +36,46 @@ SYSTEM_PROMPT = """Ты - Пятница, персональный AI-ассис
 Доступные навыки и инструменты:
 {skills_context}
 """
+
+# System prompt для Router-режима (с суб-агентами)
+ROUTER_PROMPT = """Ты - Пятница, персональный AI-ассистент для бизнеса.
+Ты — диспетчер (Router). Твоя задача — понять запрос пользователя и делегировать его
+подходящему специалисту через инструмент delegate.
+
+Правила:
+- Отвечай на русском языке
+- Для ЛЮБОГО действия (задачи, сделки, счета, календарь) — вызови delegate с нужным агентом
+- Передай в task полный запрос пользователя + весь необходимый контекст
+- Если запрос простой (приветствие, общий вопрос) — можешь ответить сам или делегировать chat
+- Если не уверен какому агенту делегировать — используй chat (fallback)
+- НЕ выполняй инструменты навыков напрямую — только delegate
+
+{memory_context}
+
+{summary_context}
+
+Доступные специалисты:
+{agents_context}
+"""
+
+DELEGATE_TOOL = LLMTool(
+    name="delegate",
+    description="Делегировать задачу специализированному агенту. Передай agent_name (имя агента) и task (полное описание задачи для агента, включая контекст из диалога).",
+    parameters={
+        "type": "object",
+        "properties": {
+            "agent_name": {
+                "type": "string",
+                "description": "Имя агента-специалиста (task, deal, invoice, calendar, chat)",
+            },
+            "task": {
+                "type": "string",
+                "description": "Полное описание задачи для агента. Включи все детали из запроса пользователя.",
+            },
+        },
+        "required": ["agent_name", "task"],
+    },
+)
 
 COMPACTION_PROMPT = """Сделай краткое резюме этого разговора. Сохрани:
 - Ключевые факты и решения
@@ -53,16 +95,22 @@ TITLE_PROMPT = """Придумай короткий заголовок (3-6 сл
 
 
 class Agent:
-    """Главный агент Пятница.ai."""
+    """Главный агент Пятница.ai (Router).
+
+    Два режима:
+    - Legacy (без registry): все скиллы в одном контексте, прямые tool calls
+    - Router (с registry): делегирует задачи суб-агентам через delegate tool
+    """
 
     def __init__(self, llm: LLMManager, skills: SkillLoader,
                  memory: MemoryStore, conversations: ConversationStore | None = None,
-                 file_store=None):
+                 file_store=None, registry=None):
         self.llm = llm
         self.skills = skills
         self.memory = memory
         self.conversations = conversations
         self.file_store = file_store
+        self.registry = registry  # AgentRegistry — если есть, включается Router-режим
         self.event_tracker = None  # инжектируется из main.py
 
     async def handle_message(self, message: Message) -> Response:
@@ -122,23 +170,34 @@ class Agent:
             return Response(text=None)
 
         memory_context = await self.memory.build_context(user_id)
-        tools = self.skills.get_all_tools()
-        logger.info("agent_tools_available", count=len(tools),
-                     names=[t.name for t in tools[:5]])
-        skills_desc_parts = []
-        for s in self.skills.skills.values():
-            tool_names = ", ".join(t.name for t in s.get_tools())
-            skills_desc_parts.append(f"• {s.name}: {s.description}\n  Инструменты: {tool_names}")
-        skills_desc = "\n\n".join(skills_desc_parts)
-
         summary, llm_messages = await conv.build_llm_messages(chat.id)
         summary_block = f"Резюме предыдущей части разговора:\n{summary}" if summary else ""
 
-        system = SYSTEM_PROMPT.format(
-            memory_context=memory_context or "Пока ничего не известно.",
-            summary_context=summary_block,
-            skills_context=skills_desc or "Навыки не загружены.",
-        )
+        # Выбираем режим: Router (с суб-агентами) или Legacy (прямые tools)
+        use_router = self.registry and self.registry.list_active()
+
+        if use_router:
+            tools = [DELEGATE_TOOL]
+            agents_desc = self.registry.router_descriptions()
+            system = ROUTER_PROMPT.format(
+                memory_context=memory_context or "Пока ничего не известно.",
+                summary_context=summary_block,
+                agents_context=agents_desc,
+            )
+            logger.info("agent_router_mode", agents=len(self.registry.list_active()))
+        else:
+            tools = self.skills.get_all_tools()
+            skills_desc_parts = []
+            for s in self.skills.skills.values():
+                tool_names = ", ".join(t.name for t in s.get_tools())
+                skills_desc_parts.append(f"* {s.name}: {s.description}\n  Инструменты: {tool_names}")
+            skills_desc = "\n\n".join(skills_desc_parts)
+            system = SYSTEM_PROMPT.format(
+                memory_context=memory_context or "Пока ничего не известно.",
+                summary_context=summary_block,
+                skills_context=skills_desc or "Навыки не загружены.",
+            )
+            logger.info("agent_legacy_mode", tools=len(tools))
 
         history = [LLMMessage(role=m["role"], content=m["content"]) for m in llm_messages]
 
@@ -297,7 +356,15 @@ class Agent:
             tool_results = []
             for tc in llm_response.tool_calls:
                 t0_skill = _time.time()
-                result = await self.skills.execute_tool(tc.skill_name, tc.action, tc.params)
+
+                # Обработка delegate tool (Router → SubAgent)
+                if tc.skill_name == "delegate" or (tc.skill_name == "delegate" and tc.action == "execute"):
+                    result = await self._handle_delegate(
+                        user_id, tc.params, chat_id)
+                else:
+                    result = await self.skills.execute_tool(
+                        tc.skill_name, tc.action, tc.params)
+
                 skill_latency = round((_time.time() - t0_skill) * 1000)
                 tool_results.append({"type": "tool_result", "tool_use_id": tc.id, "content": result})
 
@@ -313,6 +380,42 @@ class Agent:
             logger.debug("agent_loop_iteration", iteration=i + 1, tool_calls=len(llm_response.tool_calls))
 
         return "Достигнут лимит итераций. Попробуйте упростить запрос."
+
+    async def _handle_delegate(self, user_id: str, params: dict, chat_id=None) -> str:
+        """Обрабатывает delegate tool call — передаёт задачу суб-агенту."""
+        agent_name = params.get("agent_name", "")
+        task = params.get("task", "")
+
+        if not self.registry:
+            return "Суб-агенты не настроены. Работаю в legacy-режиме."
+
+        agent = self.registry.get(agent_name)
+        if not agent:
+            # Пробуем fallback
+            agent = self.registry.get_fallback()
+            if not agent:
+                available = ", ".join(a.name for a in self.registry.list_active())
+                return f"Агент '{agent_name}' не найден. Доступные: {available}"
+            logger.info("delegate_fallback", requested=agent_name, fallback=agent.name)
+
+        logger.info("delegate_to_agent", agent=agent.name, task=task[:100])
+
+        # Собираем контекст для суб-агента
+        context_parts = []
+        memory_ctx = await self.memory.build_context(user_id)
+        if memory_ctx:
+            context_parts.append(f"Память о пользователе:\n{memory_ctx}")
+
+        context = "\n\n".join(context_parts)
+
+        # Трекинг делегирования
+        if self.event_tracker:
+            await self.event_tracker.track(
+                "delegate", user_id=user_id,
+                agent=agent.name, task_len=len(task))
+
+        result = await agent.handle(task, context)
+        return result
 
     async def _summarize_for_compaction(self, text):
         prompt = COMPACTION_PROMPT.format(text=text)

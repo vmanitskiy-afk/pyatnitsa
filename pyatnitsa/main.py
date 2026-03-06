@@ -18,6 +18,7 @@ load_dotenv()
 from pyatnitsa.config.settings import get_settings
 from pyatnitsa.config.settings_store import SettingsStore
 from pyatnitsa.core.agent import Agent
+from pyatnitsa.core.agent_registry import AgentRegistry
 from pyatnitsa.core.llm import LLMManager, GigaChatProvider, ClaudeProvider
 from pyatnitsa.channels.channels import MaxChannel, TelegramChannel
 from pyatnitsa.skills.skills import SkillLoader
@@ -153,8 +154,33 @@ async def run():
     skills = SkillLoader(skills_dir=skills_path)
     await skills.load_all()
 
+    # ─── Agent Registry (мультиагентность) ──────────────────
+    registry = None
+    if llm.providers:
+        registry = AgentRegistry(skills=skills, llm=llm)
+        # Загружаем из settings_store (веб-панель) — приоритет
+        await registry.load_from_settings(settings_store)
+        # Если в settings_store нет — загружаем из YAML
+        if not registry.list_active():
+            # Ищем agents.yaml: data/ → pyatnitsa/config/
+            pkg_dir = os.path.dirname(os.path.abspath(__file__))
+            candidates = [
+                os.path.join(settings.data_dir, "agents.yaml"),
+                os.path.join(pkg_dir, "config", "agents.yaml"),
+            ]
+            for agents_yaml in candidates:
+                if os.path.exists(agents_yaml):
+                    registry.load_from_yaml(agents_yaml)
+                    break
+        if registry.list_active():
+            logger.info("multi_agent_mode", agents=[a.name for a in registry.list_active()])
+        else:
+            logger.info("legacy_agent_mode", hint="No agents configured, using direct tool calls")
+            registry = None
+
     # ─── Agent ───────────────────────────────────────────────
-    agent = Agent(llm=llm, skills=skills, memory=memory, conversations=conversation_store, file_store=file_store) if llm.providers else None
+    agent = Agent(llm=llm, skills=skills, memory=memory, conversations=conversation_store,
+                  file_store=file_store, registry=registry) if llm.providers else None
 
     # ─── Heartbeat ───────────────────────────────────────────
     heartbeat = Heartbeat(interval_minutes=settings.scheduler.heartbeat_interval_minutes)
