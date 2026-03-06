@@ -26,20 +26,23 @@ _conversation_store = None
 _skill_loader = None
 _llm_manager = None
 _agent = None
+_agent_registry = None
 _admin_secret = None  # ADMIN_PASSWORD hash
 
 
 def inject_admin_deps(event_tracker, settings_store, conversation_store,
-                      skill_loader, llm_manager, agent, admin_password: str):
+                      skill_loader, llm_manager, agent, admin_password: str,
+                      agent_registry=None):
     """Вызывается из main.py."""
     global _event_tracker, _settings_store, _conversation_store
-    global _skill_loader, _llm_manager, _agent, _admin_secret
+    global _skill_loader, _llm_manager, _agent, _agent_registry, _admin_secret
     _event_tracker = event_tracker
     _settings_store = settings_store
     _conversation_store = conversation_store
     _skill_loader = skill_loader
     _llm_manager = llm_manager
     _agent = agent
+    _agent_registry = agent_registry
     # Храним hash пароля
     _admin_secret = hashlib.sha256(admin_password.encode()).hexdigest() if admin_password else None
 
@@ -329,4 +332,111 @@ async def get_conversation(chat_id: int, _=Depends(require_admin)):
         raise HTTPException(503)
     messages = await _conversation_store.get_messages(chat_id, limit=200)
     return {"chat_id": chat_id, "messages": messages}
+
+
+# ─── Agents (суб-агенты) ──────────────────────────────────
+
+@router.get("/agents")
+async def list_agents(_=Depends(require_admin)):
+    """Список всех суб-агентов."""
+    if not _agent_registry:
+        return {"agents": [], "mode": "legacy"}
+    configs = _agent_registry.list_configs()
+    # Добавляем список доступных скиллов для UI
+    available_skills = list(_skill_loader.skills.keys()) if _skill_loader else []
+    return {
+        "agents": configs,
+        "mode": "router" if _agent_registry.list_active() else "legacy",
+        "available_skills": available_skills,
+    }
+
+
+class AgentCreate(BaseModel):
+    id: str
+    name: str
+    description: str
+    system_prompt: str
+    skills: list[str] = []
+    max_iterations: int = 8
+    temperature: float = 0.5
+    is_fallback: bool = False
+    enabled: bool = True
+
+
+@router.post("/agents")
+async def create_agent(body: AgentCreate, _=Depends(require_admin)):
+    """Создать нового суб-агента."""
+    if not _agent_registry:
+        raise HTTPException(503, "AgentRegistry не инициализирован")
+    if _agent_registry.get(body.id):
+        raise HTTPException(409, f"Агент '{body.id}' уже существует")
+
+    from pyatnitsa.core.agent_registry import AgentConfig
+    config = AgentConfig(body.model_dump())
+    _agent_registry.register(config)
+
+    # Persist to settings_store
+    if _settings_store:
+        await _agent_registry.save_to_settings(_settings_store)
+
+    return config.to_dict()
+
+
+@router.get("/agents/{agent_id}")
+async def get_agent(agent_id: str, _=Depends(require_admin)):
+    """Получить конфигурацию агента."""
+    if not _agent_registry:
+        raise HTTPException(503, "AgentRegistry не инициализирован")
+    configs = {c["id"]: c for c in _agent_registry.list_configs()}
+    if agent_id not in configs:
+        raise HTTPException(404, f"Агент '{agent_id}' не найден")
+    return configs[agent_id]
+
+
+class AgentUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    system_prompt: str | None = None
+    skills: list[str] | None = None
+    max_iterations: int | None = None
+    temperature: float | None = None
+    is_fallback: bool | None = None
+    enabled: bool | None = None
+
+
+@router.put("/agents/{agent_id}")
+async def update_agent(agent_id: str, body: AgentUpdate, _=Depends(require_admin)):
+    """Обновить конфигурацию агента."""
+    if not _agent_registry:
+        raise HTTPException(503, "AgentRegistry не инициализирован")
+    if agent_id not in _agent_registry._configs:
+        raise HTTPException(404, f"Агент '{agent_id}' не найден")
+
+    from pyatnitsa.core.agent_registry import AgentConfig
+    old = _agent_registry._configs[agent_id].to_dict()
+    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    old.update(updates)
+    config = AgentConfig(old)
+    _agent_registry.register(config)  # перезаписывает
+
+    if _settings_store:
+        await _agent_registry.save_to_settings(_settings_store)
+
+    return config.to_dict()
+
+
+@router.delete("/agents/{agent_id}")
+async def delete_agent(agent_id: str, _=Depends(require_admin)):
+    """Удалить суб-агента."""
+    if not _agent_registry:
+        raise HTTPException(503, "AgentRegistry не инициализирован")
+    if agent_id not in _agent_registry._configs:
+        raise HTTPException(404, f"Агент '{agent_id}' не найден")
+
+    _agent_registry.unregister(agent_id)
+
+    if _settings_store:
+        await _agent_registry.save_to_settings(_settings_store)
+
+    return {"deleted": agent_id}
 

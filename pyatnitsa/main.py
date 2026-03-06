@@ -207,6 +207,7 @@ async def run():
         llm_manager=llm,
         agent=agent,
         admin_password=admin_password,
+        agent_registry=registry,
     )
 
     # Передаём event_tracker агенту для трекинга
