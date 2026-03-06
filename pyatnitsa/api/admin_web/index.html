@@ -422,6 +422,10 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
       Логи
     </div>
+    <div class="nav-item" data-page="agents">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="18.36" y1="4.64" x2="16.95" y2="6.05"/><line x1="5.64" y1="4.64" x2="7.05" y2="6.05"/></svg>
+      Агенты
+    </div>
     <div class="nav-item" data-page="conversations">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
       Диалоги
@@ -510,6 +514,74 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
     <div class="table-wrap" id="logsWrap"></div>
   </div>
 
+  <!-- ═══ Agents ═══ -->
+  <div class="page" id="page-agents">
+    <div class="section-header">
+      <div class="page-title" style="margin-bottom:0">Агенты</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span class="badge badge-gray" id="agentModeBadge">legacy</span>
+        <button class="btn btn-primary btn-sm" onclick="showAgentForm()">+ Создать</button>
+      </div>
+    </div>
+
+    <!-- Agent form (create/edit) -->
+    <div id="agentFormWrap" class="table-wrap" style="display:none;margin-bottom:16px">
+      <div style="padding:20px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+          <div class="section-title" id="agentFormTitle">Новый агент</div>
+          <button class="btn btn-sm" onclick="hideAgentForm()">✕</button>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+          <div class="form-group">
+            <label class="form-label">ID (уникальный)</label>
+            <input type="text" id="af-id" placeholder="task-agent">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Название</label>
+            <input type="text" id="af-name" placeholder="Task Agent">
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Описание (для роутера)</label>
+          <input type="text" id="af-description" placeholder="Работает с задачами в Redmine">
+        </div>
+        <div class="form-group">
+          <label class="form-label">System prompt</label>
+          <textarea id="af-prompt" rows="5" style="font-size:12px;line-height:1.5" placeholder="Ты — специализированный агент..."></textarea>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px">
+          <div class="form-group">
+            <label class="form-label">Скиллы</label>
+            <div id="af-skills-list" style="display:flex;flex-wrap:wrap;gap:6px;min-height:32px;padding:4px 0"></div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Max iterations</label>
+            <input type="number" id="af-max-iter" value="8" min="1" max="30">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Temperature</label>
+            <input type="number" id="af-temp" value="0.5" min="0" max="1" step="0.1">
+          </div>
+        </div>
+        <div style="display:flex;gap:16px;align-items:center;margin-top:4px">
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+            <input type="checkbox" id="af-enabled" checked> Включен
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+            <input type="checkbox" id="af-fallback"> Fallback-агент
+          </label>
+        </div>
+        <div style="margin-top:16px;display:flex;gap:8px">
+          <button class="btn btn-primary" id="agentFormSubmit" onclick="submitAgentForm()">Создать</button>
+          <button class="btn" onclick="hideAgentForm()">Отмена</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Agent cards -->
+    <div id="agentsList"></div>
+  </div>
+
   <!-- ═══ Conversations ═══ -->
   <div class="page" id="page-conversations">
     <div class="page-title">Диалоги</div>
@@ -583,6 +655,7 @@ function loadPage(page) {
   switch (page) {
     case 'dashboard': loadDashboard(); break;
     case 'skills': loadSkills(); break;
+    case 'agents': loadAgents(); break;
     case 'users': loadUsers(); break;
     case 'llm': loadLLM(); break;
     case 'logs': loadLogs(); break;
@@ -924,6 +997,161 @@ async function loadConversation(chatId, title) {
     </div>`;
   }).join('') || '<div class="empty-state">Пустой диалог</div>';
   document.getElementById('convDetail').style.display = 'block';
+}
+
+// ─── Agents ───────────────────────────────────────────
+let _agentAvailableSkills = [];
+let _agentEditId = null; // null = create, string = edit
+
+async function loadAgents() {
+  try {
+    const data = await api('/agents');
+    const agents = data.agents || [];
+    _agentAvailableSkills = data.available_skills || [];
+    document.getElementById('agentModeBadge').textContent = data.mode || 'legacy';
+    document.getElementById('agentModeBadge').className = 'badge ' + (data.mode === 'router' ? 'badge-green' : 'badge-gray');
+
+    const el = document.getElementById('agentsList');
+    if (!agents.length) {
+      el.innerHTML = '<div class="empty-state">Нет настроенных агентов. Создайте первого агента для перехода в мультиагентный режим.</div>';
+      return;
+    }
+    el.innerHTML = agents.map(buildAgentCard).join('');
+  } catch (e) { console.error('Agents error', e); }
+}
+
+function buildAgentCard(a) {
+  const skillBadges = (a.skills || []).map(s =>
+    '<span class="badge badge-blue" style="margin-right:4px">' + esc(s) + '</span>'
+  ).join('') || '<span style="color:var(--text-muted);font-size:12px">нет скиллов</span>';
+
+  const statusBadge = a.enabled
+    ? '<span class="badge badge-green">ON</span>'
+    : '<span class="badge badge-red">OFF</span>';
+
+  const fallbackBadge = a.is_fallback
+    ? ' <span class="badge badge-yellow">fallback</span>'
+    : '';
+
+  return '<div class="skill-card" id="agent-card-' + esc(a.id) + '">'
+    + '<div class="skill-card-header" onclick="toggleAgentCard(\'' + esc(a.id) + '\')">'
+    +   '<div class="skill-icon" style="font-size:14px;font-weight:700;color:var(--accent)">' + esc(a.id.charAt(0).toUpperCase()) + '</div>'
+    +   '<div class="skill-info">'
+    +     '<div class="skill-name">' + esc(a.name) + ' ' + statusBadge + fallbackBadge + '</div>'
+    +     '<div class="skill-desc">' + esc(a.description) + '</div>'
+    +   '</div>'
+    +   '<div class="skill-meta">'
+    +     '<span style="font-size:11px;color:var(--text-muted)">iter=' + a.max_iterations + ' t=' + a.temperature + '</span>'
+    +     '<span class="skill-chevron">▼</span>'
+    +   '</div>'
+    + '</div>'
+    + '<div class="skill-body" style="display:none" id="agent-body-' + esc(a.id) + '">'
+    +   '<div style="margin-bottom:12px"><span class="form-label">Скиллы</span><div style="margin-top:4px">' + skillBadges + '</div></div>'
+    +   '<div style="margin-bottom:12px"><span class="form-label">System Prompt</span>'
+    +     '<pre style="margin-top:4px;background:var(--bg-input);border:1px solid var(--border);border-radius:6px;padding:10px;font-size:12px;font-family:var(--mono);white-space:pre-wrap;max-height:200px;overflow-y:auto;color:var(--text-dim)">' + esc(a.system_prompt) + '</pre>'
+    +   '</div>'
+    +   '<div style="display:flex;gap:8px">'
+    +     '<button class="btn btn-sm" onclick="editAgent(\'' + esc(a.id) + '\')">Редактировать</button>'
+    +     '<button class="btn btn-sm" onclick="toggleAgentEnabled(\'' + esc(a.id) + '\',' + !a.enabled + ')">' + (a.enabled ? 'Выключить' : 'Включить') + '</button>'
+    +     '<button class="btn btn-sm btn-danger" onclick="deleteAgent(\'' + esc(a.id) + '\')">Удалить</button>'
+    +   '</div>'
+    + '</div>'
+    + '</div>';
+}
+
+function toggleAgentCard(id) {
+  const card = document.getElementById('agent-card-' + id);
+  const body = document.getElementById('agent-body-' + id);
+  card.classList.toggle('open');
+  body.style.display = card.classList.contains('open') ? 'block' : 'none';
+}
+
+function renderSkillCheckboxes(selected) {
+  const wrap = document.getElementById('af-skills-list');
+  const sel = new Set(selected || []);
+  wrap.innerHTML = _agentAvailableSkills.map(s =>
+    '<label style="display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;background:var(--bg-input);padding:3px 8px;border-radius:4px;border:1px solid var(--border)">'
+    + '<input type="checkbox" value="' + esc(s) + '"' + (sel.has(s) ? ' checked' : '') + '> ' + esc(s)
+    + '</label>'
+  ).join('');
+  if (!_agentAvailableSkills.length) {
+    wrap.innerHTML = '<span style="color:var(--text-muted);font-size:12px">Нет загруженных скиллов</span>';
+  }
+}
+
+function showAgentForm(agent) {
+  _agentEditId = agent ? agent.id : null;
+  document.getElementById('agentFormTitle').textContent = agent ? 'Редактирование: ' + agent.name : 'Новый агент';
+  document.getElementById('agentFormSubmit').textContent = agent ? 'Сохранить' : 'Создать';
+  document.getElementById('af-id').value = agent ? agent.id : '';
+  document.getElementById('af-id').disabled = !!agent;
+  document.getElementById('af-name').value = agent ? agent.name : '';
+  document.getElementById('af-description').value = agent ? agent.description : '';
+  document.getElementById('af-prompt').value = agent ? agent.system_prompt : '';
+  document.getElementById('af-max-iter').value = agent ? agent.max_iterations : 8;
+  document.getElementById('af-temp').value = agent ? agent.temperature : 0.5;
+  document.getElementById('af-enabled').checked = agent ? agent.enabled : true;
+  document.getElementById('af-fallback').checked = agent ? agent.is_fallback : false;
+  renderSkillCheckboxes(agent ? agent.skills : []);
+  document.getElementById('agentFormWrap').style.display = 'block';
+}
+
+function hideAgentForm() {
+  document.getElementById('agentFormWrap').style.display = 'none';
+  _agentEditId = null;
+}
+
+function getFormSkills() {
+  const checks = document.querySelectorAll('#af-skills-list input[type=checkbox]');
+  return Array.from(checks).filter(c => c.checked).map(c => c.value);
+}
+
+async function submitAgentForm() {
+  const payload = {
+    id: document.getElementById('af-id').value.trim(),
+    name: document.getElementById('af-name').value.trim(),
+    description: document.getElementById('af-description').value.trim(),
+    system_prompt: document.getElementById('af-prompt').value,
+    skills: getFormSkills(),
+    max_iterations: parseInt(document.getElementById('af-max-iter').value) || 8,
+    temperature: parseFloat(document.getElementById('af-temp').value) || 0.5,
+    enabled: document.getElementById('af-enabled').checked,
+    is_fallback: document.getElementById('af-fallback').checked,
+  };
+
+  if (!payload.id || !payload.name) { alert('ID и Название обязательны'); return; }
+
+  try {
+    if (_agentEditId) {
+      await api('/agents/' + _agentEditId, { method: 'PUT', body: JSON.stringify(payload) });
+    } else {
+      await api('/agents', { method: 'POST', body: JSON.stringify(payload) });
+    }
+    hideAgentForm();
+    loadAgents();
+  } catch (e) { alert('Ошибка: ' + e.message); }
+}
+
+async function editAgent(id) {
+  try {
+    const agent = await api('/agents/' + id);
+    showAgentForm(agent);
+  } catch (e) { alert('Ошибка: ' + e.message); }
+}
+
+async function toggleAgentEnabled(id, enabled) {
+  try {
+    await api('/agents/' + id, { method: 'PUT', body: JSON.stringify({ enabled }) });
+    loadAgents();
+  } catch (e) { alert('Ошибка: ' + e.message); }
+}
+
+async function deleteAgent(id) {
+  if (!confirm('Удалить агента "' + id + '"?')) return;
+  try {
+    await api('/agents/' + id, { method: 'DELETE' });
+    loadAgents();
+  } catch (e) { alert('Ошибка: ' + e.message); }
 }
 
 // ─── Helpers ──────────────────────────────────────────
