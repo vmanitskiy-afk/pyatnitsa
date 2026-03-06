@@ -194,6 +194,7 @@ async def run():
         memory_store=memory,
         conversation_store=conversation_store,
         file_store=file_store,
+        agent_registry=registry,
     )
 
     # ─── Admin panel ─────────────────────────────────────────

@@ -22,20 +22,21 @@ app = FastAPI(title="Пятница.ai", version="0.1.0")
 _agent = None
 _settings_store = None
 _memory_store = None
-
-
 _conversation_store = None
 _file_store = None
+_agent_registry = None
 
 
-def inject_dependencies(agent, settings_store, memory_store, conversation_store=None, file_store=None):
+def inject_dependencies(agent, settings_store, memory_store, conversation_store=None,
+                        file_store=None, agent_registry=None):
     """Вызывается из main.py после инициализации."""
-    global _agent, _settings_store, _memory_store, _conversation_store, _file_store
+    global _agent, _settings_store, _memory_store, _conversation_store, _file_store, _agent_registry
     _agent = agent
     _settings_store = settings_store
     _memory_store = memory_store
     _conversation_store = conversation_store
     _file_store = file_store
+    _agent_registry = agent_registry
 
 
 # ─── Health ──────────────────────────────────────────────────
@@ -65,6 +66,20 @@ async def update_settings(body: SettingsUpdate):
         return JSONResponse({"error": "Settings store not initialized"}, 503)
     await _settings_store.set_many(body.settings)
     return {"status": "saved", "count": len(body.settings)}
+
+
+# ─── Agents (public, for chat UI) ────────────────────────────
+
+@app.get("/api/agents")
+async def list_agents_public():
+    """Список активных агентов для выбора в чате."""
+    if not _agent_registry:
+        return {"agents": [], "mode": "legacy"}
+    active = _agent_registry.list_active()
+    return {
+        "agents": [{"id": a.name, "name": a.name, "description": a.description} for a in active],
+        "mode": "router" if active else "legacy",
+    }
 
 
 # ─── Chat API (WebSocket) ───────────────────────────────────
@@ -156,7 +171,8 @@ async def websocket_chat(ws: WebSocket):
                     role=MessageRole.USER,
                 )
 
-                response = await _agent.handle_message(msg)
+                agent_id = payload.get("agent_id")
+                response = await _agent.handle_message(msg, agent_id=agent_id)
 
                 ws_data = {
                     "type": "message",

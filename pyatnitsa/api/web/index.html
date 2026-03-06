@@ -593,6 +593,9 @@ body {
         <div style="display:flex;align-items:center;gap:8px;">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent2)" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
           <span id="chatTitle">Пятница</span>
+          <select id="agentSelect" onchange="onAgentChange()" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:4px 8px;color:var(--text);font-family:var(--font);font-size:12px;outline:none;cursor:pointer;display:none">
+            <option value="">Авто</option>
+          </select>
         </div>
         <div style="display:flex;gap:6px;margin-left:auto;">
           <button onclick="showHistory()" class="header-btn" title="История чатов">
@@ -831,6 +834,7 @@ function connectWS() {
     // Отправляем init с user_id для загрузки истории
     ws.send(JSON.stringify({ type: 'init', user_id: userId }));
     fetchStatus();
+    fetchAgents();
   };
 
   ws.onmessage = function(e) {
@@ -1003,11 +1007,15 @@ function sendMessage() {
       addMsg('user', fileHtml + msgText);
 
       var fileRefs = uploaded.map(function(f) { return '[file:' + f.id + ':' + f.name + ']'; }).join(' ');
-      ws.send(JSON.stringify({ text: (msgText + ' ' + fileRefs).trim(), attachments: uploaded }));
+      var wsPayload = { text: (msgText + ' ' + fileRefs).trim(), attachments: uploaded };
+      if (selectedAgentId) wsPayload.agent_id = selectedAgentId;
+      ws.send(JSON.stringify(wsPayload));
     });
   } else {
     addMsg('user', text);
-    ws.send(JSON.stringify({ text: text }));
+    var wsPayload = { text: text };
+    if (selectedAgentId) wsPayload.agent_id = selectedAgentId;
+    ws.send(JSON.stringify(wsPayload));
   }
   input.value = '';
   input.style.height = 'auto';
@@ -1149,6 +1157,37 @@ function fetchStatus() {
       }
     })
     .catch(function() {});
+}
+
+// ─── Agents ─────────────────────────────────────────────────
+var selectedAgentId = '';
+
+function fetchAgents() {
+  fetch('/api/agents')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      var sel = document.getElementById('agentSelect');
+      var agents = data.agents || [];
+      if (!agents.length) { sel.style.display = 'none'; return; }
+      sel.style.display = '';
+      sel.innerHTML = '<option value="">Авто</option>';
+      agents.forEach(function(a) {
+        var opt = document.createElement('option');
+        opt.value = a.id;
+        opt.textContent = a.name;
+        if (a.description) opt.title = a.description;
+        sel.appendChild(opt);
+      });
+      // Restore selection
+      if (selectedAgentId) sel.value = selectedAgentId;
+    })
+    .catch(function() {});
+}
+
+function onAgentChange() {
+  var sel = document.getElementById('agentSelect');
+  selectedAgentId = sel.value;
+  document.getElementById('chatTitle').textContent = selectedAgentId || 'Пятница';
 }
 
 // ─── Init ───────────────────────────────────────────────────

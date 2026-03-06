@@ -113,7 +113,7 @@ class Agent:
         self.registry = registry  # AgentRegistry — если есть, включается Router-режим
         self.event_tracker = None  # инжектируется из main.py
 
-    async def handle_message(self, message: Message) -> Response:
+    async def handle_message(self, message: Message, agent_id: str | None = None) -> Response:
         import time as _time
         t0 = _time.time()
         user_id = message.user_id
@@ -173,10 +173,22 @@ class Agent:
         summary, llm_messages = await conv.build_llm_messages(chat.id)
         summary_block = f"Резюме предыдущей части разговора:\n{summary}" if summary else ""
 
-        # Выбираем режим: Router (с суб-агентами) или Legacy (прямые tools)
-        use_router = self.registry and self.registry.list_active()
+        # Выбираем режим: Direct Agent / Router / Legacy
+        direct_agent = None
+        if agent_id and self.registry:
+            direct_agent = self.registry.get(agent_id)
 
-        if use_router:
+        if direct_agent:
+            # Прямой вызов суб-агента (пользователь выбрал явно)
+            tools = direct_agent.get_tools()
+            agent_system = direct_agent.system_prompt
+            if memory_context:
+                agent_system += f"\n\nПамять о пользователе:\n{memory_context}"
+            if summary_block:
+                agent_system += f"\n\n{summary_block}"
+            system = agent_system
+            logger.info("agent_direct_mode", agent=direct_agent.name, tools=len(tools))
+        elif self.registry and self.registry.list_active():
             tools = [DELEGATE_TOOL]
             agents_desc = self.registry.router_descriptions()
             system = ROUTER_PROMPT.format(
