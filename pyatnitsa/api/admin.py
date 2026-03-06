@@ -339,14 +339,45 @@ async def get_conversation(chat_id: int, _=Depends(require_admin)):
 @router.get("/agents")
 async def list_agents(_=Depends(require_admin)):
     """Список всех суб-агентов."""
-    if not _agent_registry:
-        return {"agents": [], "mode": "legacy"}
-    configs = _agent_registry.list_configs()
-    # Добавляем список доступных скиллов для UI
     available_skills = list(_skill_loader.skills.keys()) if _skill_loader else []
+
+    # Системный агент «Пятница» — всегда присутствует, редактируемый
+    pyatnitsa_defaults = {
+        "id": "__pyatnitsa__",
+        "name": "Пятница",
+        "description": "Основной агент — прямые tool calls (legacy-режим)",
+        "system_prompt": "",
+        "skills": available_skills,
+        "max_iterations": 5,
+        "temperature": 0.5,
+        "is_fallback": False,
+        "enabled": True,
+        "system": True,  # маркер — нельзя удалить
+    }
+    # Загружаем сохранённый конфиг
+    if _settings_store:
+        saved = await _settings_store.get("agent.pyatnitsa")
+        if saved:
+            try:
+                import json as _json
+                saved_data = _json.loads(saved)
+                pyatnitsa_defaults.update(saved_data)
+                pyatnitsa_defaults["id"] = "__pyatnitsa__"
+                pyatnitsa_defaults["system"] = True
+            except (ValueError, TypeError):
+                pass
+    pyatnitsa_agent = pyatnitsa_defaults
+
+    configs = []
+    mode = "legacy"
+    if _agent_registry:
+        configs = _agent_registry.list_configs()
+        if _agent_registry.list_active():
+            mode = "router"
+
     return {
-        "agents": configs,
-        "mode": "router" if _agent_registry.list_active() else "legacy",
+        "agents": [pyatnitsa_agent] + configs,
+        "mode": mode,
         "available_skills": available_skills,
     }
 
@@ -385,6 +416,28 @@ async def create_agent(body: AgentCreate, _=Depends(require_admin)):
 @router.get("/agents/{agent_id}")
 async def get_agent(agent_id: str, _=Depends(require_admin)):
     """Получить конфигурацию агента."""
+    if agent_id == "__pyatnitsa__":
+        # Возвращаем из settings_store
+        available_skills = list(_skill_loader.skills.keys()) if _skill_loader else []
+        result = {
+            "id": "__pyatnitsa__", "name": "Пятница",
+            "description": "Основной агент — прямые tool calls (legacy-режим)",
+            "system_prompt": "", "skills": available_skills,
+            "max_iterations": 5, "temperature": 0.5,
+            "is_fallback": False, "enabled": True, "system": True,
+        }
+        if _settings_store:
+            raw = await _settings_store.get("agent.pyatnitsa")
+            if raw:
+                try:
+                    import json as _json
+                    result.update(_json.loads(raw))
+                    result["id"] = "__pyatnitsa__"
+                    result["system"] = True
+                except (ValueError, TypeError):
+                    pass
+        return result
+
     if not _agent_registry:
         raise HTTPException(503, "AgentRegistry не инициализирован")
     configs = {c["id"]: c for c in _agent_registry.list_configs()}
@@ -407,6 +460,24 @@ class AgentUpdate(BaseModel):
 @router.put("/agents/{agent_id}")
 async def update_agent(agent_id: str, body: AgentUpdate, _=Depends(require_admin)):
     """Обновить конфигурацию агента."""
+    # Системный агент Пятница — сохраняем в settings_store
+    if agent_id == "__pyatnitsa__":
+        if not _settings_store:
+            raise HTTPException(503, "SettingsStore не инициализирован")
+        updates = {k: v for k, v in body.model_dump().items() if v is not None}
+        # Загружаем текущий конфиг и мержим
+        import json as _json
+        raw = await _settings_store.get("agent.pyatnitsa")
+        current = _json.loads(raw) if raw else {}
+        current.update(updates)
+        await _settings_store.set("agent.pyatnitsa", _json.dumps(current, ensure_ascii=False))
+        # Применяем фильтр скиллов к агенту, если он запущен
+        if _agent and "skills" in updates:
+            _agent._pyatnitsa_skills = updates["skills"]
+        current["id"] = "__pyatnitsa__"
+        current["system"] = True
+        return current
+
     if not _agent_registry:
         raise HTTPException(503, "AgentRegistry не инициализирован")
     if agent_id not in _agent_registry._configs:
@@ -428,6 +499,8 @@ async def update_agent(agent_id: str, body: AgentUpdate, _=Depends(require_admin
 @router.delete("/agents/{agent_id}")
 async def delete_agent(agent_id: str, _=Depends(require_admin)):
     """Удалить суб-агента."""
+    if agent_id == "__pyatnitsa__":
+        raise HTTPException(400, "Системного агента нельзя удалить")
     if not _agent_registry:
         raise HTTPException(503, "AgentRegistry не инициализирован")
     if agent_id not in _agent_registry._configs:

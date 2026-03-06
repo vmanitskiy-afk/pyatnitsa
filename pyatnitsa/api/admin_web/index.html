@@ -1025,6 +1025,8 @@ function buildAgentCard(a) {
     '<span class="badge badge-blue" style="margin-right:4px">' + esc(s) + '</span>'
   ).join('') || '<span style="color:var(--text-muted);font-size:12px">нет скиллов</span>';
 
+  const isSystem = a.system === true;
+
   const statusBadge = a.enabled
     ? '<span class="badge badge-green">ON</span>'
     : '<span class="badge badge-red">OFF</span>';
@@ -1033,11 +1035,15 @@ function buildAgentCard(a) {
     ? ' <span class="badge badge-yellow">fallback</span>'
     : '';
 
+  const systemBadge = isSystem
+    ? ' <span class="badge badge-blue">система</span>'
+    : '';
+
   return '<div class="skill-card" id="agent-card-' + esc(a.id) + '">'
     + '<div class="skill-card-header" onclick="toggleAgentCard(\'' + esc(a.id) + '\')">'
     +   '<div class="skill-icon" style="font-size:14px;font-weight:700;color:var(--accent)">' + esc(a.id.charAt(0).toUpperCase()) + '</div>'
     +   '<div class="skill-info">'
-    +     '<div class="skill-name">' + esc(a.name) + ' ' + statusBadge + fallbackBadge + '</div>'
+    +     '<div class="skill-name">' + esc(a.name) + ' ' + statusBadge + fallbackBadge + systemBadge + '</div>'
     +     '<div class="skill-desc">' + esc(a.description) + '</div>'
     +   '</div>'
     +   '<div class="skill-meta">'
@@ -1052,8 +1058,10 @@ function buildAgentCard(a) {
     +   '</div>'
     +   '<div style="display:flex;gap:8px">'
     +     '<button class="btn btn-sm" onclick="editAgent(\'' + esc(a.id) + '\')">Редактировать</button>'
-    +     '<button class="btn btn-sm" onclick="toggleAgentEnabled(\'' + esc(a.id) + '\',' + !a.enabled + ')">' + (a.enabled ? 'Выключить' : 'Включить') + '</button>'
-    +     '<button class="btn btn-sm btn-danger" onclick="deleteAgent(\'' + esc(a.id) + '\')">Удалить</button>'
+    + (isSystem ? '' :
+        '<button class="btn btn-sm" onclick="toggleAgentEnabled(\'' + esc(a.id) + '\',' + !a.enabled + ')">' + (a.enabled ? 'Выключить' : 'Включить') + '</button>'
+    +   '<button class="btn btn-sm btn-danger" onclick="deleteAgent(\'' + esc(a.id) + '\')">Удалить</button>'
+    )
     +   '</div>'
     + '</div>'
     + '</div>';

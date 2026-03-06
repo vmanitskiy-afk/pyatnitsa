@@ -291,6 +291,32 @@ body {
   font-size: 13px;
 }
 
+.agent-chips {
+  display: flex;
+  gap: 6px;
+  padding: 8px 24px;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+
+.agent-chip {
+  padding: 5px 14px;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text2);
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+
+.agent-chip:hover { background: var(--surface2); color: var(--text); }
+.agent-chip.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
 .typing {
   align-self: flex-start;
   padding: 12px 16px;
@@ -593,9 +619,6 @@ body {
         <div style="display:flex;align-items:center;gap:8px;">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent2)" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
           <span id="chatTitle">Пятница</span>
-          <select id="agentSelect" onchange="onAgentChange()" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:4px 8px;color:var(--text);font-family:var(--font);font-size:12px;outline:none;cursor:pointer;display:none">
-            <option value="">Авто</option>
-          </select>
         </div>
         <div style="display:flex;gap:6px;margin-left:auto;">
           <button onclick="showHistory()" class="header-btn" title="История чатов">
@@ -606,6 +629,9 @@ body {
             <span>Новый чат</span>
           </button>
         </div>
+      </div>
+      <div id="agentChips" class="agent-chips">
+        <button class="agent-chip active" data-agent="" onclick="selectAgent(this, '')">Пятница</button>
       </div>
       <div class="messages" id="messages">
         <div class="msg system">Подключение к серверу...</div>
@@ -1166,28 +1192,33 @@ function fetchAgents() {
   fetch('/api/agents')
     .then(function(r) { return r.json(); })
     .then(function(data) {
-      var sel = document.getElementById('agentSelect');
+      var wrap = document.getElementById('agentChips');
       var agents = data.agents || [];
-      if (!agents.length) { sel.style.display = 'none'; return; }
-      sel.style.display = '';
-      sel.innerHTML = '<option value="">Авто</option>';
+      wrap.innerHTML = '<button class="agent-chip active" data-agent="" onclick="selectAgent(this, \'\')" title="Автоматический выбор">Пятница</button>';
       agents.forEach(function(a) {
-        var opt = document.createElement('option');
-        opt.value = a.id;
-        opt.textContent = a.name;
-        if (a.description) opt.title = a.description;
-        sel.appendChild(opt);
+        var btn = document.createElement('button');
+        btn.className = 'agent-chip';
+        btn.dataset.agent = a.id;
+        btn.textContent = a.name;
+        if (a.description) btn.title = a.description;
+        btn.onclick = function() { selectAgent(btn, a.id); };
+        wrap.appendChild(btn);
       });
       // Restore selection
-      if (selectedAgentId) sel.value = selectedAgentId;
+      if (selectedAgentId) {
+        wrap.querySelectorAll('.agent-chip').forEach(function(c) {
+          c.classList.toggle('active', c.dataset.agent === selectedAgentId);
+        });
+      }
     })
     .catch(function() {});
 }
 
-function onAgentChange() {
-  var sel = document.getElementById('agentSelect');
-  selectedAgentId = sel.value;
-  document.getElementById('chatTitle').textContent = selectedAgentId || 'Пятница';
+function selectAgent(el, agentId) {
+  selectedAgentId = agentId;
+  document.querySelectorAll('.agent-chip').forEach(function(c) { c.classList.remove('active'); });
+  el.classList.add('active');
+  document.getElementById('chatTitle').textContent = agentId || 'Пятница';
 }
 
 // ─── Init ───────────────────────────────────────────────────

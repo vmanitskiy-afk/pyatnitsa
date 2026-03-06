@@ -214,6 +214,17 @@ async def run():
     # Передаём event_tracker агенту для трекинга
     if agent:
         agent.event_tracker = event_tracker
+        # Загружаем сохранённый конфиг Пятницы (фильтр скиллов из админки)
+        raw_pyatnitsa = await settings_store.get("agent.pyatnitsa")
+        if raw_pyatnitsa:
+            try:
+                import json as _json
+                _pcfg = _json.loads(raw_pyatnitsa)
+                if "skills" in _pcfg:
+                    agent._pyatnitsa_skills = _pcfg["skills"]
+                    logger.info("pyatnitsa_skills_filter", skills=_pcfg["skills"])
+            except (ValueError, TypeError):
+                pass
 
     # ─── Channels (опционально) ──────────────────────────────
     channels = []

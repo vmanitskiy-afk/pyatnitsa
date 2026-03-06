@@ -73,13 +73,12 @@ async def update_settings(body: SettingsUpdate):
 @app.get("/api/agents")
 async def list_agents_public():
     """Список активных агентов для выбора в чате."""
-    if not _agent_registry:
-        return {"agents": [], "mode": "legacy"}
-    active = _agent_registry.list_active()
-    return {
-        "agents": [{"id": a.name, "name": a.name, "description": a.description} for a in active],
-        "mode": "router" if active else "legacy",
-    }
+    agents = []
+    if _agent_registry:
+        for a in _agent_registry.list_active():
+            agents.append({"id": a.name, "name": a.name, "description": a.description})
+    mode = "router" if agents else "legacy"
+    return {"agents": agents, "mode": mode}
 
 
 # ─── Chat API (WebSocket) ───────────────────────────────────

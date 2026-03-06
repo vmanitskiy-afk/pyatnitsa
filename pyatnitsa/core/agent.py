@@ -112,6 +112,7 @@ class Agent:
         self.file_store = file_store
         self.registry = registry  # AgentRegistry — если есть, включается Router-режим
         self.event_tracker = None  # инжектируется из main.py
+        self._pyatnitsa_skills = None  # фильтр скиллов для legacy-режима (из админки)
 
     async def handle_message(self, message: Message, agent_id: str | None = None) -> Response:
         import time as _time
@@ -198,9 +199,15 @@ class Agent:
             )
             logger.info("agent_router_mode", agents=len(self.registry.list_active()))
         else:
+            # Legacy-режим: фильтруем скиллы если задан _pyatnitsa_skills
+            allowed = set(self._pyatnitsa_skills) if self._pyatnitsa_skills else None
             tools = self.skills.get_all_tools()
+            if allowed:
+                tools = [t for t in tools if t.name.split(".")[0] in allowed]
             skills_desc_parts = []
             for s in self.skills.skills.values():
+                if allowed and s.name not in allowed:
+                    continue
                 tool_names = ", ".join(t.name for t in s.get_tools())
                 skills_desc_parts.append(f"* {s.name}: {s.description}\n  Инструменты: {tool_names}")
             skills_desc = "\n\n".join(skills_desc_parts)
@@ -209,7 +216,8 @@ class Agent:
                 summary_context=summary_block,
                 skills_context=skills_desc or "Навыки не загружены.",
             )
-            logger.info("agent_legacy_mode", tools=len(tools))
+            logger.info("agent_legacy_mode", tools=len(tools),
+                        skills_filter=list(allowed) if allowed else "all")
 
         history = [LLMMessage(role=m["role"], content=m["content"]) for m in llm_messages]
 
