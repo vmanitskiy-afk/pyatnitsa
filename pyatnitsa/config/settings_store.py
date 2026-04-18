@@ -29,6 +29,8 @@ DEFAULTS = {
     "llm.gigachat_max_tokens": "4096",
     "llm.claude_api_key": "",
     "llm.claude_model": "claude-sonnet-4-20250514",
+    "llm.ollama_base_url": "",
+    "llm.ollama_model": "gemma4:31b",
     # Channels
     "channels.max_bot_token": "",
     "channels.max_use_polling": "true",
