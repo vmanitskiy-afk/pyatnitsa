@@ -19,7 +19,7 @@ from pyatnitsa.config.settings import get_settings
 from pyatnitsa.config.settings_store import SettingsStore
 from pyatnitsa.core.agent import Agent
 from pyatnitsa.core.agent_registry import AgentRegistry
-from pyatnitsa.core.llm import LLMManager, GigaChatProvider, ClaudeProvider
+from pyatnitsa.core.llm import LLMManager, GigaChatProvider, ClaudeProvider, OllamaProvider
 from pyatnitsa.channels.channels import MaxChannel, TelegramChannel
 from pyatnitsa.skills.skills import SkillLoader
 from pyatnitsa.memory.store import MemoryStore
@@ -97,6 +97,18 @@ async def run():
             ))
         except Exception as e:
             logger.error("claude_init_failed", error=str(e))
+
+    ollama_url = settings.llm.ollama_base_url or await settings_store.get("llm.ollama_base_url")
+    if ollama_url:
+        try:
+            ollama_model = settings.llm.ollama_model or await settings_store.get("llm.ollama_model") or "gemma4:31b"
+            llm.add_provider(OllamaProvider(
+                base_url=ollama_url,
+                model=ollama_model,
+                max_tokens=settings.llm.ollama_max_tokens,
+            ))
+        except Exception as e:
+            logger.error("ollama_init_failed", error=str(e))
 
     if not llm.providers:
         logger.warning(

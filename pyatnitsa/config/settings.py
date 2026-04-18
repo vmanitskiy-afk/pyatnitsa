@@ -23,6 +23,11 @@ class LLMSettings(BaseSettings):
     claude_model: str = "claude-sonnet-4-20250514"
     claude_max_tokens: int = 4096
 
+    # Ollama (локальная модель)
+    ollama_base_url: str = ""  # e.g. http://10.0.100.127:11434
+    ollama_model: str = "gemma4:31b"
+    ollama_max_tokens: int = 4096
+
 
 class ChannelSettings(BaseSettings):
     """Настройки каналов связи."""

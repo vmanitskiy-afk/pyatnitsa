@@ -53,6 +53,17 @@ class LLMTool:
             "input_schema": self.parameters,
         }
 
+    def to_openai(self) -> dict:
+        """Конвертирует в формат OpenAI function calling."""
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": self.parameters,
+            },
+        }
+
 
 class LLMResponse:
     """Ответ от LLM."""
@@ -412,6 +423,118 @@ class ClaudeProvider(LLMProvider):
             return True
         except Exception as e:
             logger.error("claude_health_check_failed", error=str(e))
+            return False
+
+
+# ─── Ollama (локальная модель) ───────────────────────────────
+
+class OllamaProvider(LLMProvider):
+    """Ollama API — локальная модель через OpenAI-совместимый интерфейс."""
+
+    name = "ollama"
+
+    def __init__(self, base_url: str = "http://localhost:11434", model: str = "gemma4:31b", max_tokens: int = 4096):
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+        self.max_tokens = max_tokens
+        logger.info("ollama_provider_init", base_url=base_url, model=model)
+
+    async def complete(
+        self,
+        messages: list[LLMMessage],
+        system: str | None = None,
+        tools: list[LLMTool] | None = None,
+        temperature: float = 0.7,
+    ) -> LLMResponse:
+        import httpx
+
+        # Build messages in OpenAI format
+        oai_messages = []
+        if system:
+            oai_messages.append({"role": "system", "content": system})
+
+        for msg in messages:
+            content = msg.content
+            if isinstance(content, list):
+                # Flatten multimodal content to text
+                text_parts = []
+                for block in content:
+                    if isinstance(block, dict):
+                        if block.get("type") == "text":
+                            text_parts.append(block["text"])
+                        elif block.get("type") == "tool_result":
+                            text_parts.append(f"Результат: {block.get('content', '')}")
+                    elif isinstance(block, str):
+                        text_parts.append(block)
+                content = "\n".join(text_parts)
+
+            # Map tool_use responses for function calling
+            if msg.role == "tool":
+                oai_messages.append({"role": "tool", "content": content if isinstance(content, str) else json.dumps(content), "tool_call_id": getattr(msg, 'tool_call_id', 'call_0')})
+            else:
+                oai_messages.append({"role": msg.role, "content": content})
+
+        payload = {
+            "model": self.model,
+            "messages": oai_messages,
+            "temperature": temperature,
+            "stream": False,
+            "options": {"num_predict": self.max_tokens},
+        }
+
+        if tools:
+            payload["tools"] = [t.to_openai() for t in tools]
+
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.post(f"{self.base_url}/api/chat", json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+
+        # Parse response
+        message = data.get("message", {})
+        text = message.get("content")
+        tool_calls = []
+
+        for tc in message.get("tool_calls", []):
+            fn = tc.get("function", {})
+            fn_name = fn.get("name", "")
+            fn_args = fn.get("arguments", {})
+            if isinstance(fn_args, str):
+                try:
+                    fn_args = json.loads(fn_args)
+                except json.JSONDecodeError:
+                    fn_args = {}
+
+            parts = fn_name.split(".", 1)
+            tool_calls.append(ToolCall(
+                id=tc.get("id", f"call_{len(tool_calls)}"),
+                skill_name=parts[0],
+                action=parts[1] if len(parts) > 1 else "execute",
+                params=fn_args,
+            ))
+
+        # Usage stats
+        usage = {}
+        if "prompt_eval_count" in data:
+            usage["input_tokens"] = data["prompt_eval_count"]
+        if "eval_count" in data:
+            usage["output_tokens"] = data["eval_count"]
+
+        return LLMResponse(
+            text=text,
+            tool_calls=tool_calls,
+            usage=usage,
+            stop_reason="tool_use" if tool_calls else "end_turn",
+        )
+
+    async def health_check(self) -> bool:
+        import httpx
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(f"{self.base_url}/api/tags")
+                return resp.status_code == 200
+        except Exception as e:
+            logger.error("ollama_health_check_failed", error=str(e))
             return False
 
 
